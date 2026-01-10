@@ -4,6 +4,7 @@ import threading
 import time
 import requests
 from datetime import datetime
+from flask import Flask, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -16,35 +17,67 @@ logger = logging.getLogger(__name__)
 
 # Получаем токен
 TOKEN = os.getenv('TELEGRAM_TOKEN')
+PORT = int(os.environ.get('PORT', 10000))  # Для Flask
+
+# ==================== FLASK СЕРВЕР ДЛЯ HEALTH CHECK ====================
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return jsonify({
+        'status': 'online',
+        'bot': 'НеЗабудьОплатить',
+        'timestamp': datetime.now().isoformat()
+    })
+
+@flask_app.route('/health')
+def health():
+    return jsonify({'status': 'healthy'}), 200
+
+@flask_app.route('/ping')
+def ping():
+    return 'pong', 200
+
+def run_flask():
+    """Запуск Flask сервера в отдельном потоке"""
+    try:
+        logger.info(f"🌐 Flask сервер запускается на порту {PORT}")
+        flask_app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
+    except Exception as e:
+        logger.error(f"❌ Ошибка Flask: {e}")
 
 # ==================== АВТОПИНГ ====================
 def keep_alive():
     """Функция для поддержания бота онлайн"""
     
-    def ping_server():
-        """Пинг сервера каждые 10 минут"""
-        # URL вашего сервиса на Render
-        render_url = os.getenv('RENDER_URL')
+    def ping_self():
+        """Пинг самого себя каждые 5 минут"""
+        # Ждем 10 секунд чтобы Flask успел запуститься
+        time.sleep(10)
         
-        if not render_url:
-            # Если RENDER_URL не указан, пробуем определить автоматически
-            service_name = os.getenv('RENDER_SERVICE_NAME', 'telegram-reminder-bot')
-            render_url = f"https://{service_name}.onrender.com"
+        # URL нашего же сервиса
+        render_url = os.getenv('RENDER_URL', 'https://telegram-reminder-bot-vc4c.onrender.com')
         
-        logger.info(f"🔄 Автопинг запущен. URL: {render_url}")
+        # Добавляем /ping эндпоинт
+        ping_url = f"{render_url}/ping"
+        
+        logger.info(f"🔄 Автопинг запущен. Будем пинговать: {ping_url}")
         
         while True:
             try:
-                response = requests.get(render_url, timeout=10)
-                logger.info(f"✅ Пинг успешен: {response.status_code}")
+                response = requests.get(ping_url, timeout=5)
+                if response.status_code == 200 and response.text.strip() == 'pong':
+                    logger.info(f"✅ Пинг успешен: {response.status_code}")
+                else:
+                    logger.warning(f"⚠️ Странный ответ: {response.status_code} - {response.text}")
             except Exception as e:
                 logger.warning(f"⚠️ Ошибка пинга: {e}")
             
-            # Ждем 8 минут (480 секунд) - меньше 15 минут!
-            time.sleep(480)
+            # Ждем 4 минуты (240 секунд) - меньше 15 минут!
+            time.sleep(240)
     
     # Запускаем в отдельном потоке
-    ping_thread = threading.Thread(target=ping_server, daemon=True)
+    ping_thread = threading.Thread(target=ping_self, daemon=True)
     ping_thread.start()
 
 # ==================== КОМАНДЫ БОТА ====================
@@ -87,11 +120,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /new — создать напоминание (скоро)\n"
         "• /list — список напоминаний (скоро)\n"
         "• /premium — премиум подписка (скоро)\n\n"
-        "<b>Как работает бот:</b>\n"
-        "1. Создаете напоминание\n"
-        "2. Указываете сумму и дату\n"
-        "3. Получаете уведомление\n"
-        "4. Не забываете оплатить!\n\n"
         "<i>Бот теперь работает 24/7!</i>"
     )
     
@@ -155,11 +183,16 @@ def main():
     
     logger.info("🚀 Запуск бота...")
     
-    # Запускаем автопинг (чтобы бот не засыпал на Render)
+    # Запускаем Flask сервер в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    logger.info("✅ Flask сервер запущен")
+    
+    # Запускаем автопинг
     keep_alive()
     logger.info("✅ Автопинг активирован")
     
-    # Создаем приложение
+    # Создаем приложение Telegram бота
     application = Application.builder().token(TOKEN).build()
     
     # Добавляем обработчики
@@ -169,7 +202,7 @@ def main():
     
     # Запускаем бота
     logger.info("✅ Бот запущен и готов к работе!")
-    logger.info("🤖 Бот будет оставаться онлайн 24/7 благодаря автопингу")
+    logger.info("🌐 Доступны эндпоинты: /ping, /health, /")
     application.run_polling()
 
 if __name__ == '__main__':
