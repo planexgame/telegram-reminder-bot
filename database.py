@@ -163,5 +163,36 @@ class Database:
             
             return cursor.fetchone() is not None
 
+    # ========== НОВАЯ ФУНКЦИЯ ДЛЯ УВЕДОМЛЕНИЙ ==========
+    def get_reminders_for_notification(self, days_before=1):
+        """Получить напоминания для уведомления (за N дней до платежа)"""
+        with self.get_connection() as conn:
+            if not conn:
+                return []
+                
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT 
+                    u.telegram_id, 
+                    r.title, 
+                    r.amount, 
+                    r.payment_date,
+                    DATE(r.payment_date) - CURRENT_DATE as days_left
+                FROM reminders r
+                JOIN users u ON r.user_id = u.id
+                WHERE 
+                    r.is_active = TRUE
+                    AND DATE(r.payment_date) > CURRENT_DATE
+                    AND DATE(r.payment_date) - CURRENT_DATE = %s
+                ORDER BY r.payment_date
+            ''', (days_before,))
+            
+            columns = ['telegram_id', 'title', 'amount', 'payment_date', 'days_left']
+            reminders = []
+            for row in cursor.fetchall():
+                reminders.append(dict(zip(columns, row)))
+            
+            return reminders
+
 # Создаем глобальный экземпляр БД
 db = Database()
