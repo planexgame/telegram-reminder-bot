@@ -1,7 +1,7 @@
 # bot.py
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -13,8 +13,9 @@ from telegram.ext import (
     filters
 )
 
-# Импортируем нашу базу данных
+# Импортируем нашу базу данных и уведомления
 from database import db
+from notifications import send_reminder_notifications
 
 # Настройка логирования
 logging.basicConfig(
@@ -67,10 +68,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 Напоминаний: {reminders_count}/{FREE_LIMIT}\n\n"
         f"<b>🎯 Бесплатные функции:</b>\n"
         f"• До {FREE_LIMIT} напоминаний\n"
-        f"• Уведомления за день\n\n"
+        f"• Уведомления за 1 день до платежа\n\n"
         f"<b>💎 Премиум (299₽/мес):</b>\n"
         f"• Неограниченные напоминания\n"
-        f"• Повторяющиеся платежи\n\n"
+        f"• Повторяющиеся платежи\n"
+        f"• Уведомления за 3 и 7 дней\n\n"
         f"Выберите действие:",
         reply_markup=reply_markup,
         parse_mode='HTML'
@@ -90,9 +92,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Как работает бот:</b>\n"
         "1. Создаете напоминание (/new)\n"
         "2. Указываете сумму и дату\n"
-        "3. Получаете уведомление\n"
+        "3. Получаете уведомление за 1 день\n"
         "4. Не забываете оплатить!\n\n"
-        f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний\n\n"
+        f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний\n"
+        "<b>Уведомления:</b> каждый день в 10:00 по Москве\n\n"
         "<i>По вопросам: @your_support</i>"
     )
     
@@ -242,6 +245,9 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reminder_id = db.add_reminder(user_id, title, amount, payment_date)
     
     if reminder_id:
+        # Форматируем дату для показа пользователю
+        formatted_date = f"{day:02d}.{month:02d}.{year}"
+        
         keyboard = [
             [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
             [InlineKeyboardButton("➕ Еще напоминание", callback_data="create")]
@@ -252,8 +258,8 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ <b>Напоминание создано!</b>\n\n"
             f"<b>Название:</b> {title}\n"
             f"<b>Сумма:</b> {amount}₽\n"
-            f"<b>Дата:</b> {date_text}\n\n"
-            f"Вы получите уведомление за день до платежа.",
+            f"<b>Дата:</b> {formatted_date}\n\n"
+            f"Вы получите уведомление за 1 день до платежа (в 10:00 по Москве).",
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
@@ -315,10 +321,14 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Форматируем дату
         payment_date = rem['payment_date']
         if isinstance(payment_date, str):
-            date_parts = payment_date.split('-')
-            formatted_date = f"{date_parts[2]}.{date_parts[1]}.{date_parts[0]}"
+            # Преобразуем строку в дату
+            try:
+                date_obj = datetime.strptime(payment_date, '%Y-%m-%d')
+                formatted_date = date_obj.strftime('%d.%m.%Y')
+            except:
+                formatted_date = payment_date
         else:
-            formatted_date = str(payment_date)
+            formatted_date = payment_date.strftime('%d.%m.%Y')
         
         message += f"{i}. <b>{rem['title']}</b>\n"
         message += f"   💰 {rem['amount']}₽\n"
@@ -328,7 +338,8 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_amount += float(rem['amount'] or 0)
     
     message += f"<b>Итого:</b> {len(reminders)} напоминаний на сумму {total_amount:.2f}₽\n"
-    message += f"<b>Лимит:</b> {len(reminders)}/{FREE_LIMIT}"
+    message += f"<b>Лимит:</b> {len(reminders)}/{FREE_LIMIT}\n"
+    message += f"<b>Уведомления:</b> за 1 день до платежа"
     
     # Клавиатура для управления
     keyboard = []
@@ -350,6 +361,57 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+# ========== ТЕСТОВАЯ КОМАНДА ДЛЯ УВЕДОМЛЕНИЙ ==========
+async def test_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тестовая команда для проверки уведомлений (/testnotify)"""
+    try:
+        await update.message.reply_text("🔔 Тестирую отправку уведомлений...")
+        
+        # Вызываем функцию уведомлений вручную
+        await send_reminder_notifications(context)
+        
+        await update.message.reply_text("✅ Тестовые уведомления отправлены. Проверьте логи в Render.")
+    except Exception as e:
+        logger.error(f"Ошибка теста уведомлений: {e}")
+        await update.message.reply_text(f"❌ Ошибка отправки уведомлений: {e}")
+
+# ========== СТАТУС БОТА ==========
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /status - проверка статуса бота"""
+    try:
+        # Получаем напоминания на завтра
+        tomorrow_reminders = db.get_reminders_for_notification(days_before=1)
+        
+        # Получаем статистику
+        with db.get_connection() as conn:
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM users")
+                users_count = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM reminders WHERE is_active = TRUE")
+                active_reminders = cursor.fetchone()[0]
+            else:
+                users_count = 0
+                active_reminders = 0
+        
+        status_text = (
+            f"<b>📊 Статус бота «НеЗабудьОплатить»</b>\n\n"
+            f"<b>👥 Пользователи:</b> {users_count}\n"
+            f"<b>📝 Активных напоминаний:</b> {active_reminders}\n"
+            f"<b>🔔 Уведомлений на завтра:</b> {len(tomorrow_reminders)}\n"
+            f"<b>⏰ Время уведомлений:</b> 10:00 по Москве\n"
+            f"<b>📅 Лимит бесплатных:</b> {FREE_LIMIT}\n"
+            f"<b>🕒 Серверное время:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
+            f"<i>Бот работает стабильно! ✅</i>"
+        )
+        
+        await update.message.reply_text(status_text, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Ошибка команды status: {e}")
+        await update.message.reply_text("❌ Ошибка получения статуса.")
 
 # ========== ОБРАБОТЧИК КНОПОК ==========
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -392,9 +454,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Показываем первые 5 напоминаний
             message = "📋 <b>Последние напоминания:</b>\n\n"
             for i, rem in enumerate(reminders[:5], 1):
+                # Форматируем дату
+                payment_date = rem['payment_date']
+                if isinstance(payment_date, str):
+                    try:
+                        date_obj = datetime.strptime(payment_date, '%Y-%m-%d')
+                        formatted_date = date_obj.strftime('%d.%m.%Y')
+                    except:
+                        formatted_date = payment_date
+                else:
+                    formatted_date = payment_date.strftime('%d.%m.%Y')
+                
                 message += f"{i}. <b>{rem['title']}</b>\n"
                 message += f"   💰 {rem['amount']}₽\n"
-                message += f"   📅 {rem['payment_date']}\n\n"
+                message += f"   📅 {formatted_date}\n\n"
+            
+            message += f"<i>Всего напоминаний: {len(reminders)}</i>"
             
             await query.edit_message_text(
                 message,
@@ -442,8 +517,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• /start — начать работу\n"
                 "• /new — создать напоминание\n"
                 "• /list — список напоминаний\n"
+                "• /status — статус бота\n"
                 "• /help — эта справка\n\n"
-                f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний",
+                f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний\n"
+                "<b>Уведомления:</b> за 1 день до платежа",
                 parse_mode='HTML'
             )
             
@@ -477,10 +554,13 @@ def main():
         logger.error("❌ Токен не найден!")
         return
     
-    logger.info("🚀 Запуск бота...")
+    logger.info("🚀 Запуск бота «НеЗабудьОплатить»...")
     
     # Инициализируем базу данных
-    db.init_db()
+    if db.init_db():
+        logger.info("✅ База данных инициализирована")
+    else:
+        logger.warning("⚠️ База данных не подключена")
     
     # Создаем приложение
     app = Application.builder().token(TOKEN).build()
@@ -496,17 +576,35 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     
-    # Регистрируем обработчики
+    # Регистрируем обработчики команд
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("list", list_command))
+    app.add_handler(CommandHandler("testnotify", test_notify))
+    app.add_handler(CommandHandler("status", status_command))
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
+    
+    # Настраиваем планировщик уведомлений
+    job_queue = app.job_queue
+    if job_queue:
+        # Отправляем уведомления каждый день в 10:00 по Москве
+        # 10:00 MSK = 7:00 UTC
+        job_queue.run_daily(
+            send_reminder_notifications,
+            time=datetime.time(hour=7, minute=0),  # 10:00 по Москве
+            days=(0, 1, 2, 3, 4, 5, 6),  # Все дни недели
+            name="daily_reminders"
+        )
+        logger.info("📅 Планировщик уведомлений настроен (каждый день в 10:00 МСК)")
+    else:
+        logger.warning("⚠️ JobQueue не доступен, уведомления отключены")
     
     # Обработчик ошибок
     app.add_error_handler(error_handler)
     
-    logger.info("✅ Бот запущен!")
+    logger.info("✅ Бот запущен и готов к работе!")
+    logger.info("📝 Доступные команды: /start, /new, /list, /help, /testnotify, /status")
     app.run_polling()
 
 if __name__ == "__main__":
