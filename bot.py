@@ -186,29 +186,58 @@ def run_simple_http_server():
     server.serve_forever()
 
 def start_keep_alive():
-    """Фоновая задача для периодического self-ping"""
+    """Исправленный keep-alive для Render"""
     import requests
     
-    print("🔧 Keep-alive механизм запущен")
+    print("=" * 50)
+    print("🔄 ЗАПУСКАЮ ИСПРАВЛЕННЫЙ KEEP-ALIVE")
+    print(f"🔗 URL: https://telegram-reminder-bot-vc4c.onrender.com")
+    print("⏰ Интервал: 8 минут")
+    print("=" * 50)
+    
+    ping_count = 0
+    errors_count = 0
     
     while True:
         try:
-            # Пингуем сами себя
-            port = int(os.getenv('PORT', 8080))
-            response = requests.get(f'http://localhost:{port}/ping', timeout=5)
+            ping_count += 1
+            url = "https://telegram-reminder-bot-vc4c.onrender.com/ping"
+            
+            # Делаем запрос с таймаутом
+            response = requests.get(url, timeout=15)
             
             current_time = time_module.strftime('%H:%M:%S')
+            
             if response.status_code == 200:
-                print(f"✅ [{current_time}] Self-ping успешен")
+                if response.text.strip() == 'pong':
+                    print(f"✅ [{current_time}] Keep-alive #{ping_count}: Render получил запрос!")
+                    errors_count = 0  # Сбрасываем счетчик ошибок
+                else:
+                    print(f"⚠️ [{current_time}] Keep-alive #{ping_count}: Неверный ответ: '{response.text}'")
+                    errors_count += 1
             else:
-                print(f"⚠️ [{current_time}] Self-ping: код {response.status_code}")
+                print(f"❌ [{current_time}] Keep-alive #{ping_count}: Код {response.status_code}")
+                errors_count += 1
                 
+            # Если много ошибок подряд - увеличиваем интервал
+            if errors_count > 3:
+                print(f"⚠️ Много ошибок ({errors_count}), увеличиваю интервал...")
+                time_module.sleep(600)  # 10 минут
+            else:
+                time_module.sleep(480)  # 8 минут
+                
+        except requests.exceptions.Timeout:
+            current_time = time_module.strftime('%H:%M:%S')
+            print(f"⏱️ [{current_time}] Keep-alive #{ping_count}: Таймаут (15 сек)")
+            errors_count += 1
+            time_module.sleep(300)  # 5 минут при таймауте
+            
         except Exception as e:
             current_time = time_module.strftime('%H:%M:%S')
-            print(f"❌ [{current_time}] Self-ping ошибка: {str(e)[:50]}")
-        
-        # Ждем 8 минут (меньше чем 15-минутный лимит Render)
-        time_module.sleep(480)  # 8 минут = 480 секунд
+            error_msg = str(e)
+            print(f"🚨 [{current_time}] Keep-alive #{ping_count}: {error_msg[:80]}")
+            errors_count += 1
+            time_module.sleep(300)  # 5 минут при ошибке
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ==========
 
@@ -2701,4 +2730,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
