@@ -41,7 +41,7 @@ async def send_reminder_notifications(context: ContextTypes.DEFAULT_TYPE):
                     f"<b>{reminder['title']}</b>\n"
                     f"💰 Сумма: {reminder['amount']}₽\n"
                     f"📅 Дата оплаты: <b>{formatted_date}</b>\n"
-                    f"⏰ Осталось дней: <b>{reminder['days_left']}</b>\n\n"
+                    f"⏰ Остался 1 день\n\n"
                     f"Не забудьте оплатить вовремя!"
                 )
                 
