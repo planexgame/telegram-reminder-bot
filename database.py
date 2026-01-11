@@ -1,4 +1,4 @@
-# database.py - обновленная версия
+# database.py - рабочая версия
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor, DictCursor
@@ -7,10 +7,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Получаем URL базы данных из переменных окружения
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
-    logger.error("❌ DATABASE_URL не найден! Установите в Render.")
+    logger.error("❌ DATABASE_URL не найден!")
     DATABASE_URL = "postgresql://user:pass@localhost/dbname"
 
 class Database:
@@ -31,7 +30,7 @@ class Database:
             return None
     
     def init_db(self):
-        """Инициализация базы данных (создание таблиц если их нет)"""
+        """Инициализация базы данных"""
         try:
             conn = self.get_connection()
             if not conn:
@@ -49,8 +48,7 @@ class Database:
                     last_name VARCHAR(255),
                     is_premium BOOLEAN DEFAULT FALSE,
                     premium_until TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
@@ -64,10 +62,7 @@ class Database:
                     payment_date DATE NOT NULL,
                     recurrence VARCHAR(50) DEFAULT 'once',
                     is_active BOOLEAN DEFAULT TRUE,
-                    notified_3_days BOOLEAN DEFAULT FALSE,
-                    notified_1_day BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
@@ -78,26 +73,15 @@ class Database:
                     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
                     amount DECIMAL(10, 2) NOT NULL,
                     period_days INTEGER NOT NULL,
-                    yookassa_payment_id VARCHAR(255),
                     status VARCHAR(50) DEFAULT 'pending',
-                    completed_at TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
-            # Индексы для ускорения поиска
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_reminders_user_id ON reminders(user_id)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_reminders_payment_date ON reminders(payment_date)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_reminders_is_active ON reminders(is_active)
-            ''')
+            # Индексы
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_reminders_user_id ON reminders(user_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_reminders_payment_date ON reminders(payment_date)')
             
             conn.commit()
             cursor.close()
@@ -126,13 +110,12 @@ class Database:
             
             if result:
                 user_id = result[0]
-                # Обновляем данные пользователя
+                # Обновляем данные если изменились
                 cursor.execute('''
                     UPDATE users 
-                    SET username = %s, 
-                        first_name = %s, 
-                        last_name = %s,
-                        updated_at = NOW()
+                    SET username = COALESCE(%s, username),
+                        first_name = COALESCE(%s, first_name),
+                        last_name = COALESCE(%s, last_name)
                     WHERE id = %s
                 ''', (username, first_name, last_name, user_id))
             else:
@@ -150,14 +133,17 @@ class Database:
             
         except Exception as e:
             logger.error(f"❌ Ошибка get_or_create_user: {e}")
-            return None
+            # Если таблицы нет - создаем
+            self.init_db()
+            # Пробуем снова
+            return self.get_or_create_user(telegram_id, username, first_name, last_name)
     
     def get_user_premium_status(self, user_id):
         """Получение статуса премиума пользователя"""
         try:
             conn = self.get_connection()
             if not conn:
-                return {'has_active_premium': False}
+                return {'has_active_premium': False, 'is_premium': False, 'premium_until': None}
             
             cursor = conn.cursor(cursor_factory=DictCursor)
             cursor.execute('''
@@ -170,17 +156,23 @@ class Database:
             cursor.close()
             
             if result:
-                is_premium = result['is_premium']
+                is_premium = bool(result['is_premium'])
                 premium_until = result['premium_until']
                 
                 # Проверяем, не истек ли премиум
                 has_active_premium = False
                 if is_premium and premium_until:
-                    if datetime.now() < premium_until:
-                        has_active_premium = True
-                    else:
-                        # Премиум истек - обновляем статус
-                        self.deactivate_premium(user_id)
+                    try:
+                        if datetime.now() < premium_until:
+                            has_active_premium = True
+                        else:
+                            # Премиум истек
+                            self.deactivate_premium(user_id)
+                            has_active_premium = False
+                    except:
+                        has_active_premium = is_premium
+                else:
+                    has_active_premium = is_premium
                 
                 return {
                     'is_premium': is_premium,
@@ -188,11 +180,11 @@ class Database:
                     'has_active_premium': has_active_premium
                 }
             else:
-                return {'has_active_premium': False}
+                return {'has_active_premium': False, 'is_premium': False, 'premium_until': None}
                 
         except Exception as e:
             logger.error(f"❌ Ошибка get_user_premium_status: {e}")
-            return {'has_active_premium': False}
+            return {'has_active_premium': False, 'is_premium': False, 'premium_until': None}
     
     def get_user_reminders_count(self, user_id):
         """Получение количества напоминаний пользователя"""
@@ -216,7 +208,6 @@ class Database:
             logger.error(f"❌ Ошибка get_user_reminders_count: {e}")
             return 0
     
-    # ========== НОВАЯ ФУНКЦИЯ: get_user_reminders ==========
     def get_user_reminders(self, user_id, limit=50):
         """Получение списка напоминаний пользователя"""
         try:
@@ -226,7 +217,7 @@ class Database:
             
             cursor = conn.cursor(cursor_factory=DictCursor)
             cursor.execute('''
-                SELECT id, title, amount, payment_date, recurrence, is_active, created_at
+                SELECT id, title, amount, payment_date, recurrence, is_active
                 FROM reminders 
                 WHERE user_id = %s AND is_active = TRUE
                 ORDER BY payment_date ASC
@@ -239,14 +230,18 @@ class Database:
             # Конвертируем в список словарей
             result = []
             for reminder in reminders:
+                # Преобразуем payment_date в строку если нужно
+                payment_date = reminder['payment_date']
+                if hasattr(payment_date, 'strftime'):
+                    payment_date = payment_date.strftime('%Y-%m-%d')
+                
                 result.append({
                     'id': reminder['id'],
-                    'title': reminder['title'],
-                    'amount': float(reminder['amount']) if reminder['amount'] else 0,
-                    'payment_date': reminder['payment_date'],
-                    'recurrence': reminder['recurrence'],
-                    'is_active': reminder['is_active'],
-                    'created_at': reminder['created_at']
+                    'title': reminder['title'] or 'Без названия',
+                    'amount': float(reminder['amount']) if reminder['amount'] else 0.0,
+                    'payment_date': payment_date,
+                    'recurrence': reminder['recurrence'] or 'once',
+                    'is_active': bool(reminder['is_active'])
                 })
             
             return result
@@ -255,7 +250,6 @@ class Database:
             logger.error(f"❌ Ошибка get_user_reminders: {e}")
             return []
     
-    # ========== НОВАЯ ФУНКЦИЯ: delete_reminder ==========
     def delete_reminder(self, user_id, reminder_id):
         """Удаление напоминания пользователя"""
         try:
@@ -265,7 +259,6 @@ class Database:
             
             cursor = conn.cursor()
             
-            # Проверяем, что напоминание принадлежит пользователю
             cursor.execute('''
                 DELETE FROM reminders 
                 WHERE id = %s AND user_id = %s
@@ -281,7 +274,6 @@ class Database:
             logger.error(f"❌ Ошибка delete_reminder: {e}")
             return False
     
-    # ========== НОВАЯ ФУНКЦИЯ: activate_premium ==========
     def activate_premium(self, user_id, days):
         """Активация премиум подписки пользователю"""
         try:
@@ -297,8 +289,7 @@ class Database:
             cursor.execute('''
                 UPDATE users 
                 SET is_premium = TRUE, 
-                    premium_until = %s,
-                    updated_at = NOW()
+                    premium_until = %s
                 WHERE id = %s
             ''', (premium_until, user_id))
             
@@ -315,7 +306,6 @@ class Database:
             logger.error(f"❌ Ошибка activate_premium: {e}")
             return False
     
-    # ========== ДОПОЛНИТЕЛЬНАЯ ФУНКЦИЯ: deactivate_premium ==========
     def deactivate_premium(self, user_id):
         """Деактивация премиум подписки"""
         try:
@@ -328,8 +318,7 @@ class Database:
             cursor.execute('''
                 UPDATE users 
                 SET is_premium = FALSE, 
-                    premium_until = NULL,
-                    updated_at = NOW()
+                    premium_until = NULL
                 WHERE id = %s
             ''', (user_id,))
             
@@ -354,6 +343,19 @@ class Database:
                 return None
             
             cursor = conn.cursor()
+            
+            # Преобразуем дату если нужно
+            if isinstance(payment_date, str):
+                try:
+                    # Убедимся что дата в правильном формате
+                    datetime.strptime(payment_date, '%Y-%m-%d')
+                except ValueError:
+                    # Если дата в другом формате, преобразуем
+                    try:
+                        dt = datetime.strptime(payment_date, '%d.%m.%Y')
+                        payment_date = dt.strftime('%Y-%m-%d')
+                    except:
+                        payment_date = datetime.now().strftime('%Y-%m-%d')
             
             cursor.execute('''
                 INSERT INTO reminders (user_id, title, amount, payment_date, recurrence)
@@ -388,12 +390,8 @@ class Database:
                 SELECT r.*, u.telegram_id, u.first_name, u.is_premium
                 FROM reminders r
                 JOIN users u ON r.user_id = u.id
-                WHERE r.payment_date = %s 
+                WHERE DATE(r.payment_date) = %s 
                 AND r.is_active = TRUE
-                AND (
-                    (days_before = 1 AND r.notified_1_day = FALSE) OR
-                    (days_before = 3 AND r.notified_3_days = FALSE AND u.is_premium = TRUE)
-                )
             ''', (target_date,))
             
             reminders = cursor.fetchall()
@@ -404,38 +402,6 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка get_reminders_for_notification: {e}")
             return []
-    
-    def mark_reminder_notified(self, reminder_id, days_before):
-        """Пометить напоминание как уведомленное"""
-        try:
-            conn = self.get_connection()
-            if not conn:
-                return False
-            
-            cursor = conn.cursor()
-            
-            if days_before == 1:
-                cursor.execute('''
-                    UPDATE reminders 
-                    SET notified_1_day = TRUE,
-                        updated_at = NOW()
-                    WHERE id = %s
-                ''', (reminder_id,))
-            elif days_before == 3:
-                cursor.execute('''
-                    UPDATE reminders 
-                    SET notified_3_days = TRUE,
-                        updated_at = NOW()
-                    WHERE id = %s
-                ''', (reminder_id,))
-            
-            conn.commit()
-            cursor.close()
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка mark_reminder_notified: {e}")
-            return False
     
     def create_payment(self, user_id, amount, period_days):
         """Создание записи о платеже"""
@@ -462,54 +428,6 @@ class Database:
             logger.error(f"❌ Ошибка create_payment: {e}")
             return None
     
-    def update_payment_status(self, payment_id, status, yookassa_payment_id=None):
-        """Обновление статуса платежа"""
-        try:
-            conn = self.get_connection()
-            if not conn:
-                return False
-            
-            cursor = conn.cursor()
-            
-            if status == 'succeeded':
-                cursor.execute('''
-                    UPDATE payments 
-                    SET status = %s, 
-                        yookassa_payment_id = %s,
-                        completed_at = NOW()
-                    WHERE id = %s
-                ''', (status, yookassa_payment_id, payment_id))
-            else:
-                cursor.execute('''
-                    UPDATE payments 
-                    SET status = %s, 
-                        yookassa_payment_id = %s
-                    WHERE id = %s
-                ''', (status, yookassa_payment_id, payment_id))
-            
-            updated = cursor.rowcount > 0
-            
-            # Если платеж успешный - активируем премиум
-            if status == 'succeeded':
-                cursor.execute('''
-                    SELECT user_id, period_days 
-                    FROM payments 
-                    WHERE id = %s
-                ''', (payment_id,))
-                
-                result = cursor.fetchone()
-                if result:
-                    user_id, period_days = result
-                    self.activate_premium(user_id, period_days)
-            
-            conn.commit()
-            cursor.close()
-            return updated
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка update_payment_status: {e}")
-            return False
-    
     def get_payment_info(self, payment_id):
         """Получение информации о платеже"""
         try:
@@ -532,32 +450,8 @@ class Database:
             logger.error(f"❌ Ошибка get_payment_info: {e}")
             return None
     
-    def get_user_payments(self, user_id):
-        """Получение платежей пользователя"""
-        try:
-            conn = self.get_connection()
-            if not conn:
-                return []
-            
-            cursor = conn.cursor(cursor_factory=DictCursor)
-            
-            cursor.execute('''
-                SELECT * FROM payments 
-                WHERE user_id = %s 
-                ORDER BY created_at DESC
-            ''', (user_id,))
-            
-            payments = cursor.fetchall()
-            cursor.close()
-            
-            return payments
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка get_user_payments: {e}")
-            return []
-    
-    def update_payment_status_by_yookassa_id(self, yookassa_payment_id, status):
-        """Обновление статуса платежа по ID ЮKassa"""
+    def update_payment_status(self, payment_id, status, yookassa_payment_id=None):
+        """Обновление статуса платежа"""
         try:
             conn = self.get_connection()
             if not conn:
@@ -565,36 +459,41 @@ class Database:
             
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT id, user_id, period_days 
-                FROM payments 
-                WHERE yookassa_payment_id = %s
-            ''', (yookassa_payment_id,))
-            
-            result = cursor.fetchone()
-            if not result:
-                return False
-            
-            payment_id, user_id, period_days = result
-            
-            # Обновляем статус
-            cursor.execute('''
-                UPDATE payments 
-                SET status = %s,
-                    completed_at = CASE WHEN %s = 'succeeded' THEN NOW() ELSE completed_at END
-                WHERE id = %s
-            ''', (status, status, payment_id))
-            
-            # Если платеж успешный - активируем премиум
             if status == 'succeeded':
-                self.activate_premium(user_id, period_days)
+                cursor.execute('''
+                    UPDATE payments 
+                    SET status = %s, 
+                        yookassa_payment_id = %s
+                    WHERE id = %s
+                ''', (status, yookassa_payment_id, payment_id))
+                
+                # Получаем информацию о платеже для активации премиума
+                cursor.execute('''
+                    SELECT user_id, period_days 
+                    FROM payments 
+                    WHERE id = %s
+                ''', (payment_id,))
+                
+                result = cursor.fetchone()
+                if result:
+                    user_id, period_days = result
+                    self.activate_premium(user_id, period_days)
+            else:
+                cursor.execute('''
+                    UPDATE payments 
+                    SET status = %s, 
+                        yookassa_payment_id = %s
+                    WHERE id = %s
+                ''', (status, yookassa_payment_id, payment_id))
             
+            updated = cursor.rowcount > 0
             conn.commit()
             cursor.close()
-            return True
+            
+            return updated
             
         except Exception as e:
-            logger.error(f"❌ Ошибка update_payment_status_by_yookassa_id: {e}")
+            logger.error(f"❌ Ошибка update_payment_status: {e}")
             return False
 
 # Создаем глобальный экземпляр базы данных
