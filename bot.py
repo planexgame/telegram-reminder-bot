@@ -1,3 +1,13 @@
+def main():
+    """Запуск бота"""
+    # ОЧИСТКА: Удаляем все ожидающие обновления перед запуском
+    import requests
+    try:
+        clear_url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1"
+        requests.get(clear_url, timeout=5)
+        print("✅ Очередь обновлений Telegram очищена")
+    except:
+        print("⚠️ Не удалось очистить очередь обновлений")
 # bot.py - ПОЛНАЯ ВЕРСИЯ
 import os
 import logging
@@ -739,3 +749,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
