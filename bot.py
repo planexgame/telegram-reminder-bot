@@ -1,8 +1,8 @@
-# bot.py - полный исправленный код с keep-alive
+# bot.py - полный обновленный код с Telegram Stars
 import os
 import logging
 from datetime import datetime, timedelta, time
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -10,15 +10,18 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
-    filters
+    filters,
+    PreCheckoutQueryHandler
 )
 import threading
 import time as time_module
+import asyncio
 
 # Импортируем наши модули
 from database import db
 from notifications import send_reminder_notifications
-from payments import yookassa
+from telegram_payments import telegram_stars
+from manual_payments import manual_payments
 
 # Настройка логирования
 logging.basicConfig(
@@ -57,9 +60,9 @@ except Exception as e:
 # Константы
 FREE_LIMIT = 5
 PREMIUM_PRICES = {
-    '1': {'amount': 299, 'days': 30, 'text': '1 месяц'},
-    '3': {'amount': 799, 'days': 90, 'text': '3 месяца'},
-    '12': {'amount': 1990, 'days': 365, 'text': '12 месяцев'}
+    '1': {'stars': 299, 'days': 30, 'text': '1 месяц'},
+    '3': {'stars': 799, 'days': 90, 'text': '3 месяца'},
+    '12': {'stars': 1990, 'days': 365, 'text': '12 месяцев'}
 }
 
 # Состояния для ConversationHandler
@@ -83,7 +86,8 @@ def run_web_server():
                 "status": "active",
                 "service": "telegram-reminder-bot",
                 "bot": "running",
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "payments": "telegram_stars"
             })
         
         @web_app.route('/ping')
@@ -103,8 +107,9 @@ def run_web_server():
                     "status": "healthy",
                     "database": db_status,
                     "bot": "running",
+                    "payments": telegram_stars.get_payment_stats(),
                     "timestamp": datetime.now().isoformat(),
-                    "version": "1.0.0"
+                    "version": "2.0.0"
                 }), 200
             except Exception as e:
                 return jsonify({
@@ -125,15 +130,21 @@ def run_web_server():
                     
                     cursor.execute("SELECT COUNT(*) FROM reminders WHERE is_active = TRUE")
                     total_reminders = cursor.fetchone()[0]
+                    
+                    cursor.execute("SELECT COUNT(*) FROM payments WHERE status = 'succeeded'")
+                    total_payments = cursor.fetchone()[0]
                     cursor.close()
             except:
-                total_users = total_reminders = 0
+                total_users = total_reminders = total_payments = 0
             
             return jsonify({
                 "bot": "НеЗабудьОплатить",
                 "status": "running",
+                "version": "2.0.0",
                 "users": total_users,
                 "active_reminders": total_reminders,
+                "successful_payments": total_payments,
+                "payment_method": "telegram_stars",
                 "uptime": "always",
                 "server_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 "admin_id": ADMIN_ID
@@ -168,6 +179,7 @@ def run_simple_http_server():
                 response = json.dumps({
                     "status": "healthy",
                     "service": "telegram-bot",
+                    "payments": "telegram_stars",
                     "timestamp": datetime.now().isoformat()
                 })
                 self.wfile.write(response.encode())
@@ -267,7 +279,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("📋 Мои напоминания", callback_data="list")
             ],
             [
-                InlineKeyboardButton("💎 Премиум", callback_data="premium_info"),
+                InlineKeyboardButton("⭐ Премиум", callback_data="premium_info"),
                 InlineKeyboardButton("🆘 Помощь", callback_data="help_btn")
             ]
         ]
@@ -278,19 +290,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         # Формируем сообщение
-        premium_text = "💎 АКТИВЕН" if has_premium else "🆓 БЕСПЛАТНЫЙ"
+        premium_text = "⭐ АКТИВЕН" if has_premium else "🆓 БЕСПЛАТНЫЙ"
         limit_text = '∞' if has_premium else FREE_LIMIT
         
         message = (
-            f"🔔 <b>НеЗабудьОплатить</b>\n\n"
+            f"🔔 <b>НеЗабудьОплатить v2.0</b>\n\n"
             f"Привет, {user.first_name}!\n\n"
             f"<b>Ваша статистика:</b>\n"
             f"📊 Напоминаний: {reminders_count}/{limit_text}\n"
-            f"💎 Статус: {premium_text}\n\n"
+            f"⭐ Статус: {premium_text}\n\n"
             f"<b>Ваши возможности:</b>\n"
             f"• {'♾️ Неограниченные' if has_premium else f'До {FREE_LIMIT}'} напоминаний\n"
             f"• 🔔 Уведомления за {'3 и 7 дней' if has_premium else '1 день'}\n"
             f"• {'🔄 Повторяющиеся платежи' if has_premium else '📅 Разовые напоминания'}\n\n"
+            f"<b>Способы оплаты:</b>\n"
+            f"• ⭐ Telegram Stars (автоматически)\n"
+            f"• 💳 Ручная оплата (карта/СБП)\n\n"
             f"Выберите действие:"
         )
         
@@ -298,14 +313,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.error(f"Ошибка в команде start: {e}")
-        # Упрощенная версия
         await update.message.reply_text(
-            f"🔔 <b>НеЗабудьОплатить</b>\n\n"
+            f"🔔 <b>НеЗабудьОплатить v2.0</b>\n\n"
             f"Привет, {user.first_name}!\n\n"
             f"Бот работает! 🚀\n\n"
             f"Используйте команды:\n"
             f"/new - создать напоминание\n"
             f"/list - список напоминаний\n"
+            f"/premium - премиум подписка\n"
             f"/status - статус бота",
             parse_mode='HTML'
         )
@@ -313,18 +328,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help"""
     help_text = (
-        "<b>🔔 НеЗабудьОплатить — помощь</b>\n\n"
+        "<b>🔔 НеЗабудьОплатить v2.0 — помощь</b>\n\n"
         "<b>Основные команды:</b>\n"
         "• /start — начать работу\n"
         "• /new — создать напоминание\n"
         "• /list — список напоминаний\n"
         "• /premium — премиум подписка\n"
-        "• /buy — купить премиум\n"
         "• /status — статус бота\n"
         "• /help — эта справка\n\n"
         f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний\n"
         "<b>Уведомления:</b> каждый день в 10:00 по Москве\n\n"
-        "<i>По вопросам обращайтесь к администратору</i>"
+        "<b>Способы оплаты премиума:</b>\n"
+        "1. ⭐ Telegram Stars (автоматически)\n"
+        "2. 💳 Ручная оплата (карта/СБП)\n\n"
+        "<i>По вопросам оплаты обращайтесь к администратору</i>"
     )
     
     await update.message.reply_text(help_text, parse_mode='HTML')
@@ -355,7 +372,7 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reminders_count = db.get_user_reminders_count(user_id)
             if reminders_count >= FREE_LIMIT:
                 keyboard = [
-                    [InlineKeyboardButton("💎 Купить премиум", callback_data="buy_premium")],
+                    [InlineKeyboardButton("⭐ Купить премиум", callback_data="premium_info")],
                     [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -363,7 +380,7 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(
                     f"⚠️ <b>Достигнут лимит!</b>\n\n"
                     f"У вас {reminders_count} из {FREE_LIMIT} бесплатных напоминаний.\n\n"
-                    "💎 <b>Премиум подписка</b> дает неограниченное количество напоминаний!",
+                    "⭐ <b>Премиум подписка</b> дает неограниченное количество напоминаний!",
                     reply_markup=reply_markup,
                     parse_mode='HTML'
                 )
@@ -520,7 +537,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not reminders:
             keyboard = [
                 [InlineKeyboardButton("➕ Создать напоминание", callback_data="create")],
-                [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
+                [InlineKeyboardButton("⭐ Премиум", callback_data="premium_info")],
                 [InlineKeyboardButton("🔄 Обновить", callback_data="list")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -539,7 +556,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_amount = 0
         
         for i, rem in enumerate(reminders[:10], 1):
-            # Форматируем дату (ИСПРАВЛЕННЫЙ КОД)
+            # Форматируем дату
             payment_date = rem.get('payment_date', '')
             if isinstance(payment_date, str):
                 try:
@@ -577,7 +594,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if not has_premium and len(reminders) >= FREE_LIMIT:
             message += f"\n⚠️ <b>Достигнут бесплатный лимит!</b>\n"
-            message += f"Купите премиум для неограниченных напоминаний 💎\n"
+            message += f"Купите премиум для неограниченных напоминаний ⭐\n"
         
         # Клавиатура с кнопками удаления
         keyboard = []
@@ -609,7 +626,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Если нет премиума и достигнут/почти достигнут лимит
         if not has_premium and len(reminders) >= FREE_LIMIT - 2:
-            keyboard.append([InlineKeyboardButton("💎 Купить премиум", callback_data="buy_premium")])
+            keyboard.append([InlineKeyboardButton("⭐ Купить премиум", callback_data="premium_info")])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -651,7 +668,7 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not reminders:
             keyboard = [
                 [InlineKeyboardButton("➕ Создать напоминание", callback_data="create")],
-                [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
+                [InlineKeyboardButton("⭐ Премиум", callback_data="premium_info")],
                 [InlineKeyboardButton("🔄 Обновить", callback_data="list")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -670,7 +687,7 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         total_amount = 0
         
         for i, rem in enumerate(reminders[:10], 1):
-            # Форматируем дату (ИСПРАВЛЕННЫЙ КОД)
+            # Форматируем дату
             payment_date = rem.get('payment_date', '')
             if isinstance(payment_date, str):
                 try:
@@ -708,7 +725,7 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         if not has_premium and len(reminders) >= FREE_LIMIT:
             message += f"\n⚠️ <b>Достигнут бесплатный лимит!</b>\n"
-            message += f"Купите премиум для неограниченных напоминаний 💎\n"
+            message += f"Купите премиум для неограниченных напоминаний ⭐\n"
         
         # Клавиатура с кнопками удаления
         keyboard = []
@@ -740,7 +757,7 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         # Если нет премиума и достигнут/почти достигнут лимит
         if not has_premium and len(reminders) >= FREE_LIMIT - 2:
-            keyboard.append([InlineKeyboardButton("💎 Купить премиум", callback_data="buy_premium")])
+            keyboard.append([InlineKeyboardButton("⭐ Купить премиум", callback_data="premium_info")])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -760,10 +777,13 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /status"""
     try:
+        stars_status = telegram_stars.get_payment_stats()
+        
         status_text = (
-            f"<b>📊 СТАТУС БОТА «НеЗабудьОплатить»</b>\n\n"
+            f"<b>📊 СТАТУС БОТА «НеЗабудьОплатить v2.0»</b>\n\n"
             f"<b>🤖 Telegram API:</b> ✅ подключен\n"
-            f"<b>💳 ЮKassa:</b> {'✅ настроена' if yookassa.is_configured() else '⚠️ не настроена'}\n"
+            f"<b>⭐ Telegram Stars:</b> {'✅ настроен' if stars_status['configured'] else '⚠️ не настроен'}\n"
+            f"<b>💳 Ручная оплата:</b> ✅ доступна\n"
             f"<b>🕒 Время уведомлений:</b> 10:00 по Москве\n"
             f"<b>📅 Лимит бесплатных:</b> {FREE_LIMIT}\n"
             f"<b>🕒 Серверное время:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
@@ -772,9 +792,11 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ /new — создание напоминания\n"
             f"✅ /list — список напоминаний\n"
             f"✅ /premium — премиум подписка\n"
-            f"✅ /buy — покупка премиума\n"
             f"✅ /status — этот статус\n"
             f"✅ /help — справка\n\n"
+            f"<b>Способы оплаты:</b>\n"
+            f"• ⭐ Telegram Stars (автоматическая оплата)\n"
+            f"• 💳 Ручная оплата (карта, СБП, крипто)\n\n"
             f"<i>Все системы работают нормально! 🎉</i>"
         )
         
@@ -787,7 +809,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== ПРЕМИУМ КОМАНДЫ ==========
 
 async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /premium - с возможностью покупки"""
+    """Команда /premium - с возможностью покупки через Stars"""
     user = update.effective_user
     
     try:
@@ -811,9 +833,9 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             until_date = premium_status.get('premium_until')
             if until_date:
                 until_str = until_date.strftime('%d.%m.%Y') if hasattr(until_date, 'strftime') else str(until_date)
-                message = f"💎 <b>У ВАС АКТИВНА ПРЕМИУМ ПОДПИСКА!</b>\n\nДействует до: <b>{until_str}</b>"
+                message = f"⭐ <b>У ВАС АКТИВНА ПРЕМИУМ ПОДПИСКА!</b>\n\nДействует до: <b>{until_str}</b>"
             else:
-                message = "💎 <b>У ВАС АКТИВНА ПРЕМИУМ ПОДПИСКА!</b>\n\nДействует бессрочно"
+                message = "⭐ <b>У ВАС АКТИВНА ПРЕМИУМ ПОДПИСКА!</b>\n\nДействует бессрочно"
             
             keyboard = [
                 [InlineKeyboardButton("🔄 Мой статус", callback_data="premium_status")],
@@ -822,7 +844,7 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             # Если нет премиума - предлагаем купить
             message = (
-                f"💎 <b>ПРЕМИУМ ПОДПИСКА</b>\n\n"
+                f"⭐ <b>ПРЕМИУМ ПОДПИСКА</b>\n\n"
                 f"<b>Бесплатный тариф ограничен:</b>\n"
                 f"• 🛑 Всего {FREE_LIMIT} напоминаний\n"
                 f"• ⏰ Уведомления только за 1 день\n"
@@ -832,20 +854,19 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• 🔄 Повторяющиеся платежи\n"
                 f"• 🔔 Уведомления за 3 и 7 дней\n"
                 f"• 📊 Расширенная статистика\n\n"
-                f"<b>Выберите подписку:</b>"
+                f"<b>Выберите способ оплаты:</b>"
             )
             
             # Кнопки покупки
             keyboard = [
                 [
-                    InlineKeyboardButton("1 месяц - 299₽", callback_data="buy_1"),
-                    InlineKeyboardButton("3 месяца - 799₽", callback_data="buy_3")
+                    InlineKeyboardButton("⭐ Telegram Stars", callback_data="stars_payment"),
+                    InlineKeyboardButton("💳 Ручная оплата", callback_data="manual_payment")
                 ],
                 [
-                    InlineKeyboardButton("12 месяцев - 1990₽", callback_data="buy_12"),
-                    InlineKeyboardButton("🔄 Мой статус", callback_data="premium_status")
-                ],
-                [InlineKeyboardButton("🆘 Помощь", callback_data="help_btn")]
+                    InlineKeyboardButton("🔄 Мой статус", callback_data="premium_status"),
+                    InlineKeyboardButton("🆘 Помощь", callback_data="help_btn")
+                ]
             ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -862,9 +883,11 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Ошибка получения информации о премиуме.")
 
-async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /buy - покупка премиума"""
-    user = update.effective_user
+async def stars_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора оплаты через Stars"""
+    query = update.callback_query
+    user = query.from_user
+    await query.answer()
     
     try:
         user_id = db.get_or_create_user(
@@ -875,7 +898,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         if not user_id:
-            await update.message.reply_text("❌ Ошибка базы данных.")
+            await query.edit_message_text("❌ Ошибка базы данных.")
             return
         
         # Проверяем, не активна ли уже подписка
@@ -883,29 +906,110 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         has_premium = premium_status.get('has_active_premium', False) if premium_status else False
         
         if has_premium:
-            await update.message.reply_text(
+            await query.edit_message_text(
                 "✅ У вас уже активна премиум подписка!\n\n"
                 "Используйте команду /premium чтобы увидеть детали."
             )
             return
         
-        # Предлагаем варианты
+        # Предлагаем варианты подписок через Stars
         keyboard = [
             [
-                InlineKeyboardButton("1 месяц - 299₽", callback_data="buy_1"),
-                InlineKeyboardButton("3 месяца - 799₽", callback_data="buy_3")
+                InlineKeyboardButton("⭐ 1 месяц - 299 Stars", callback_data="stars_buy_1"),
+                InlineKeyboardButton("⭐ 3 месяца - 799 Stars", callback_data="stars_buy_3")
             ],
             [
-                InlineKeyboardButton("12 месяцев - 1990₽", callback_data="buy_12"),
+                InlineKeyboardButton("⭐ 12 месяцев - 1990 Stars", callback_data="stars_buy_12"),
                 InlineKeyboardButton("🎁 Тест 7 дней", callback_data="trial")
             ],
-            [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")]
+            [
+                InlineKeyboardButton("💳 Перейти к ручной оплате", callback_data="manual_payment"),
+                InlineKeyboardButton("↩️ Назад", callback_data="premium_info")
+            ]
         ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text(
-            "💳 <b>ВЫБЕРИТЕ ПОДПИСКУ</b>\n\n"
+        await query.edit_message_text(
+            "⭐ <b>ОПЛАТА ЧЕРЕЗ TELEGRAM STARS</b>\n\n"
+            "Telegram Stars — это внутренняя валюта Telegram для оплаты услуг.\n\n"
+            "<b>Преимущества:</b>\n"
+            "• ⚡ Мгновенная активация\n"
+            "• 🔒 Безопасная оплата\n"
+            "• 📱 Удобно через приложение\n\n"
+            "<b>Выберите подписку:</b>\n\n"
+            "• <b>1 месяц</b> — 299 Stars\n"
+            "   👉 Для тестирования\n\n"
+            "• <b>3 месяца</b> — 799 Stars (267 Stars/мес)\n"
+            "   👉 Экономия 11%\n\n"
+            "• <b>12 месяцев</b> — 1990 Stars (166 Stars/мес)\n"
+            "   👉 Экономия 45%\n\n"
+            "• <b>7 дней теста</b> — бесплатно\n"
+            "   👉 Все функции премиума",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в stars_payment_handler: {e}")
+        await query.edit_message_text("❌ Ошибка при оформлении подписки.")
+
+async def manual_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора ручной оплаты"""
+    query = update.callback_query
+    user = query.from_user
+    await query.answer()
+    
+    try:
+        user_id = db.get_or_create_user(
+            telegram_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name
+        )
+        
+        if not user_id:
+            await query.edit_message_text("❌ Ошибка базы данных.")
+            return
+        
+        # Проверяем, не активна ли уже подписка
+        premium_status = db.get_user_premium_status(user_id)
+        has_premium = premium_status.get('has_active_premium', False) if premium_status else False
+        
+        if has_premium:
+            await query.edit_message_text(
+                "✅ У вас уже активна премиум подписка!\n\n"
+                "Используйте команду /premium чтобы увидеть детали."
+            )
+            return
+        
+        # Предлагаем варианты ручной оплаты
+        keyboard = [
+            [
+                InlineKeyboardButton("1 месяц - 299₽", callback_data="manual_buy_1"),
+                InlineKeyboardButton("3 месяца - 799₽", callback_data="manual_buy_3")
+            ],
+            [
+                InlineKeyboardButton("12 месяцев - 1990₽", callback_data="manual_buy_12"),
+                InlineKeyboardButton("🎁 Тест 7 дней", callback_data="trial")
+            ],
+            [
+                InlineKeyboardButton("⭐ Перейти к Telegram Stars", callback_data="stars_payment"),
+                InlineKeyboardButton("↩️ Назад", callback_data="premium_info")
+            ]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "💳 <b>РУЧНАЯ ОПЛАТА</b>\n\n"
+            "После выбора подписки вы получите реквизиты для оплаты.\n"
+            "Администратор активирует премиум вручную после получения платежа.\n\n"
+            "<b>Доступные способы оплаты:</b>\n"
+            "• 💳 Перевод на карту\n"
+            "• 📱 СБП (Система быстрых платежей)\n"
+            "• ₿ Криптовалюта (USDT, TRC20)\n\n"
+            "<b>Выберите подписку:</b>\n\n"
             "• <b>1 месяц</b> — 299₽\n"
             "   👉 Для тестирования\n\n"
             "• <b>3 месяца</b> — 799₽ (267₽/мес)\n"
@@ -919,8 +1023,150 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     except Exception as e:
-        logger.error(f"Ошибка в buy_command: {e}")
-        await update.message.reply_text("❌ Ошибка при оформлении подписки.")
+        logger.error(f"Ошибка в manual_payment_handler: {e}")
+        await query.edit_message_text("❌ Ошибка при оформлении подписки.")
+
+# ========== ОБРАБОТКА TELEGRAM STARS ==========
+
+async def stars_pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение платежа перед списанием Stars"""
+    query = update.pre_checkout_query
+    
+    try:
+        # Проверяем payload
+        payload = query.invoice_payload
+        if payload.startswith("premium_"):
+            period = payload.split("_")[1]
+            
+            if period in PREMIUM_PRICES:
+                # Проверяем сумму
+                expected_amount = PREMIUM_PRICES[period]['stars'] * 100  # В минимальных единицах
+                
+                if query.total_amount == expected_amount:
+                    await query.answer(ok=True)
+                    logger.info(f"✅ Pre-checkout подтвержден: {payload}")
+                else:
+                    await query.answer(
+                        ok=False, 
+                        error_message=f"Неверная сумма. Ожидается {PREMIUM_PRICES[period]['stars']} Stars"
+                    )
+            else:
+                await query.answer(
+                    ok=False, 
+                    error_message="Неверный период подписки"
+                )
+        else:
+            await query.answer(
+                ok=False, 
+                error_message="Неверный payload"
+            )
+            
+    except Exception as e:
+        logger.error(f"Ошибка pre-checkout: {e}")
+        await query.answer(
+            ok=False,
+            error_message="Внутренняя ошибка. Попробуйте позже."
+        )
+
+async def stars_successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка успешного платежа через Telegram Stars"""
+    try:
+        payment = update.message.successful_payment
+        
+        # Извлекаем данные из payload
+        payload = payment.invoice_payload
+        if not payload.startswith("premium_"):
+            logger.error(f"Неизвестный payload: {payload}")
+            return
+        
+        period = payload.split("_")[1]
+        
+        if period not in PREMIUM_PRICES:
+            logger.error(f"Неизвестный период: {period}")
+            return
+        
+        user = update.effective_user
+        
+        # Регистрируем пользователя
+        user_id = db.get_or_create_user(
+            telegram_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name
+        )
+        
+        if not user_id:
+            await update.message.reply_text(
+                "❌ Ошибка активации. Свяжитесь с администратором."
+            )
+            return
+        
+        # Создаем запись о платеже в базе
+        payment_id = db.create_payment(
+            user_id=user_id,
+            amount=payment.total_amount / 100,
+            period_days=PREMIUM_PRICES[period]['days']
+        )
+        
+        if payment_id:
+            # Обновляем статус платежа
+            db.update_payment_status(
+                payment_id=payment_id,
+                status='succeeded',
+                telegram_payment_id=payment.telegram_payment_charge_id
+            )
+            
+            # Активируем премиум
+            if db.activate_premium(user_id, PREMIUM_PRICES[period]['days']):
+                # Отправляем подтверждение пользователю
+                await update.message.reply_text(
+                    f"🎉 <b>ОПЛАТА УСПЕШНА!</b>\n\n"
+                    f"✅ Премиум подписка на {PREMIUM_PRICES[period]['text']} активирована.\n"
+                    f"⭐ Оплачено: {payment.total_amount/100} Stars\n"
+                    f"🆔 ID платежа: {payment.telegram_payment_charge_id}\n\n"
+                    f"<b>Теперь вам доступны:</b>\n"
+                    f"• ♾️ Неограниченные напоминания\n"
+                    f"• 🔄 Повторяющиеся платежи\n"
+                    f"• 🔔 Уведомления за 3 и 7 дней\n\n"
+                    f"Спасибо за покупку! ⭐",
+                    parse_mode='HTML'
+                )
+                
+                # Уведомляем администратора
+                try:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=f"💰 <b>НОВЫЙ ПЛАТЕЖ TELEGRAM STARS</b>\n\n"
+                             f"👤 Пользователь: @{user.username or user.id}\n"
+                             f"📦 Подписка: {PREMIUM_PRICES[period]['text']}\n"
+                             f"⭐ Stars: {payment.total_amount/100}\n"
+                             f"🆔 Payment ID: {payment.telegram_payment_charge_id}\n"
+                             f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+                             f"Премиум активирован автоматически.",
+                        parse_mode='HTML'
+                    )
+                except Exception as admin_error:
+                    logger.error(f"Не удалось уведомить админа: {admin_error}")
+                
+                logger.info(f"✅ Премиум активирован через Stars: user={user.id}, period={period}")
+            else:
+                await update.message.reply_text(
+                    "❌ Ошибка активации премиума. Свяжитесь с администратором."
+                )
+        else:
+            await update.message.reply_text(
+                "❌ Ошибка записи платежа. Свяжитесь с администратором."
+            )
+            
+    except Exception as e:
+        logger.error(f"Ошибка обработки Stars платежа: {e}", exc_info=True)
+        
+        try:
+            await update.message.reply_text(
+                "❌ Ошибка обработки платежа. Свяжитесь с администратором."
+            )
+        except:
+            pass
 
 # ========== АДМИН КОМАНДЫ ==========
 
@@ -960,756 +1206,124 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка статистики: {e}")
         total_users = premium_users = total_reminders = successful_payments = 0
     
-    # Клавиатура с рассылкой
+    # Клавиатура
     keyboard = [
         [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
         [InlineKeyboardButton("📨 Рассылка", callback_data="broadcast_text")],
         [
-            InlineKeyboardButton("💎 Активировать", callback_data="admin_activate"),
+            InlineKeyboardButton("⭐ Активировать", callback_data="admin_activate"),
             InlineKeyboardButton("🚫 Деактивировать", callback_data="admin_deactivate_menu")
         ],
+        [InlineKeyboardButton("💰 Платежи", callback_data="admin_payments")],
         [InlineKeyboardButton("🔄 Обновить", callback_data="admin_panel")]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    stars_stats = telegram_stars.get_payment_stats()
+    
     if update.callback_query:
         await update.callback_query.edit_message_text(
-            f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
+            f"⚙️ <b>АДМИН ПАНЕЛЬ v2.0</b>\n\n"
             f"<b>Статистика:</b>\n"
             f"• 👥 Пользователей: {total_users}\n"
-            f"• 💎 Премиум: {premium_users}\n"
+            f"• ⭐ Премиум: {premium_users}\n"
             f"• 📝 Напоминаний: {total_reminders}\n"
-            f"• 💰 Успешных платежей: {successful_payments}\n\n"
+            f"• 💰 Успешных платежей: {successful_payments}\n"
+            f"• ⚡ Telegram Stars: {'✅' if stars_stats['configured'] else '❌'}\n\n"
             f"<b>Доступные функции:</b>\n"
             f"• 📨 Рассылка сообщений\n"
-            f"• 💎 Управление премиумом\n"
-            f"• 📊 Просмотр статистики\n\n"
+            f"• ⭐ Управление премиумом\n"
+            f"• 📊 Просмотр статистики\n"
+            f"• 💰 Управление платежами\n\n"
             f"Выберите действие:",
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
     else:
         await update.message.reply_text(
-            f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
+            f"⚙️ <b>АДМИН ПАНЕЛЬ v2.0</b>\n\n"
             f"<b>Статистика:</b>\n"
             f"• 👥 Пользователей: {total_users}\n"
-            f"• 💎 Премиум: {premium_users}\n"
+            f"• ⭐ Премиум: {premium_users}\n"
             f"• 📝 Напоминаний: {total_reminders}\n"
-            f"• 💰 Успешных платежей: {successful_payments}\n\n"
+            f"• 💰 Успешных платежей: {successful_payments}\n"
+            f"• ⚡ Telegram Stars: {'✅' if stars_stats['configured'] else '❌'}\n\n"
             f"<b>Доступные функции:</b>\n"
             f"• 📨 Рассылка сообщений\n"
-            f"• 💎 Управление премиумом\n"
-            f"• 📊 Просмотр статистики\n\n"
+            f"• ⭐ Управление премиумом\n"
+            f"• 📊 Просмотр статистики\n"
+            f"• 💰 Управление платежами\n\n"
             f"Выберите действие:",
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
 
-async def admin_activate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда активации премиума админом"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
+async def admin_payments_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик просмотра платежей"""
+    query = update.callback_query
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("Доступ запрещен", show_alert=True)
         return
     
-    if not context.args:
-        keyboard = [
-            [InlineKeyboardButton("👥 Список пользователей", callback_data="admin_users")],
-            [InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "💎 <b>АКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
-            "<b>Использование:</b>\n"
-            "<code>/admin_activate @username 30</code>\n\n"
-            "<b>Где:</b>\n"
-            "• @username — username пользователя\n"
-            "• 30 — количество дней премиума\n\n"
-            "<b>Примеры:</b>\n"
-            "<code>/admin_activate @ivanov 30</code> — на 30 дней\n"
-            "<code>/admin_activate @petrov 365</code> — на год\n\n"
-            "Используйте /admin_users чтобы увидеть список пользователей",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-        return
-    
-    username = context.args[0].replace('@', '')
-    days = int(context.args[1]) if len(context.args) > 1 else 30
-    
-    # Находим пользователя по username
-    with db.get_connection() as conn:
-        if not conn:
-            await update.message.reply_text("❌ Ошибка базы данных.")
-            return
-        
-        cursor = conn.cursor()
-        cursor.execute('SELECT id, telegram_id, first_name FROM users WHERE username = %s', (username,))
-        result = cursor.fetchone()
-        
-        if not result:
-            await update.message.reply_text(f"❌ Пользователь @{username} не найден.")
-            return
-        
-        user_id, telegram_id, first_name = result
-        
-        # Активируем премиум
-        if db.activate_premium(user_id, days):
-            # Отправляем уведомление пользователю
-            try:
-                await context.bot.send_message(
-                    chat_id=telegram_id,
-                    text=f"🎉 <b>Вам активирована премиум подписка!</b>\n\n"
-                         f"Администратор активировал вам премиум подписку на {days} дней.\n\n"
-                         f"<b>Теперь вам доступны:</b>\n"
-                         f"• ♾️ Неограниченные напоминания\n"
-                         f"• 🔄 Повторяющиеся платежи\n"
-                         f"• 🔔 Уведомления за 3 и 7 дней\n\n"
-                         f"Спасибо за использование бота! 💎",
-                    parse_mode='HTML'
-                )
-            except:
-                pass  # Пользователь мог заблокировать бота
-            
-            await update.message.reply_text(
-                f"✅ <b>Премиум успешно активирован!</b>\n\n"
-                f"Пользователь: {first_name or '@'+username}\n"
-                f"Telegram ID: <code>{telegram_id}</code>\n"
-                f"Срок: {days} дней\n\n"
-                f"Пользователь получил уведомление.",
-                parse_mode='HTML'
-            )
-        else:
-            await update.message.reply_text(f"❌ Ошибка активации премиума для @{username}.")
-
-async def admin_deactivate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда деактивации премиума админом (ИСПРАВЛЕННАЯ)"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    if not context.args:
-        keyboard = [
-            [InlineKeyboardButton("👥 Список пользователей", callback_data="admin_users")],
-            [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-            [InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "🚫 <b>ДЕАКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
-            "<b>Использование:</b>\n"
-            "<code>/admin_deactivate @username</code>\n"
-            "или\n"
-            "<code>/admin_deactivate USER_ID</code>\n\n"
-            "<b>Примеры:</b>\n"
-            "<code>/admin_deactivate @ivanov</code>\n"
-            "<code>/admin_deactivate 123456789</code>\n\n"
-            "Для поиска пользователя: /admin_users",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-        return
-    
-    identifier = context.args[0]
+    await query.answer()
     
     try:
-        conn = db.get_connection()
-        if not conn:
-            await update.message.reply_text("❌ Ошибка подключения к базе данных.")
-            return
-        
-        cursor = conn.cursor()
-        
-        # Определяем, это username или ID
-        if identifier.startswith('@'):
-            username = identifier.replace('@', '')
-            cursor.execute('''
-                SELECT id, telegram_id, first_name, username, is_premium, premium_until 
-                FROM users 
-                WHERE username = %s OR telegram_id::TEXT = %s
-            ''', (username, identifier))
-        else:
-            # Пробуем как Telegram ID
-            try:
-                telegram_id = int(identifier)
+        with db.get_connection() as conn:
+            if conn:
+                cursor = conn.cursor()
+                # Получаем последние платежи
                 cursor.execute('''
-                    SELECT id, telegram_id, first_name, username, is_premium, premium_until 
-                    FROM users 
-                    WHERE telegram_id = %s
-                ''', (telegram_id,))
-            except ValueError:
-                # Пробуем как внутренний ID пользователя
-                try:
-                    user_id = int(identifier)
-                    cursor.execute('''
-                        SELECT id, telegram_id, first_name, username, is_premium, premium_until 
-                        FROM users 
-                        WHERE id = %s
-                    ''', (user_id,))
-                except:
-                    await update.message.reply_text("❌ Неверный формат. Используйте @username, Telegram ID или User ID.")
-                    return
-        
-        result = cursor.fetchone()
-        
-        if not result:
-            await update.message.reply_text(f"❌ Пользователь {identifier} не найден.")
-            cursor.close()
-            return
-        
-        db_user_id, telegram_id, first_name, username_db, is_premium, premium_until = result
-        
-        # Проверяем, есть ли у пользователя активный премиум
-        if not is_premium:
-            await update.message.reply_text(
-                f"ℹ️ У пользователя {first_name or '@' + (username_db or 'нет')} нет активной премиум подписки."
-            )
-            cursor.close()
-            return
-        
-        # Деактивируем премиум
-        if db.deactivate_premium(db_user_id):
-            # Уведомляем пользователя
-            try:
-                await context.bot.send_message(
-                    chat_id=telegram_id,
-                    text=f"⚠️ <b>ВАША ПРЕМИУМ ПОДПИСКА ОТМЕНЕНА</b>\n\n"
-                         f"Администратор отменил вашу премиум подписку.\n\n"
-                         f"<b>Теперь у вас:</b>\n"
-                         f"• 🛑 Только {FREE_LIMIT} бесплатных напоминаний\n"
-                         f"• ⏰ Уведомления только за 1 день\n"
-                         f"• 🔄 Нет повторяющихся платежей\n\n"
-                         f"Вы можете снова оформить премиум через /buy\n\n"
-                         f"По вопросам обращайтесь к администратору.",
-                    parse_mode='HTML'
-                )
-            except Exception as e:
-                logger.warning(f"Не удалось уведомить пользователя {telegram_id}: {e}")
-            
-            # Форматируем дату окончания для отчета
-            premium_until_str = "Неизвестно"
-            if premium_until:
-                if hasattr(premium_until, 'strftime'):
-                    premium_until_str = premium_until.strftime('%d.%m.%Y %H:%M')
+                    SELECT p.id, u.username, u.telegram_id, p.amount, p.period_days, p.status, p.created_at
+                    FROM payments p
+                    JOIN users u ON p.user_id = u.id
+                    ORDER BY p.created_at DESC
+                    LIMIT 10
+                ''')
+                payments = cursor.fetchall()
+                
+                message = "💰 <b>ПОСЛЕДНИЕ ПЛАТЕЖИ</b>\n\n"
+                
+                if payments:
+                    for i, (pid, username, tg_id, amount, days, status, created_at) in enumerate(payments, 1):
+                        status_icon = "✅" if status == 'succeeded' else "⏳" if status == 'pending' else "❌"
+                        date_str = created_at.strftime('%d.%m %H:%M') if hasattr(created_at, 'strftime') else str(created_at)[:16]
+                        
+                        message += f"{i}. {status_icon} @{username or tg_id}\n"
+                        message += f"   💰 {amount} Stars | {days} дней\n"
+                        message += f"   📅 {date_str} | ID: {pid}\n\n"
                 else:
-                    premium_until_str = str(premium_until)[:16]
-            
-            await update.message.reply_text(
-                f"✅ <b>Премиум подписка отменена!</b>\n\n"
-                f"<b>Пользователь:</b> {first_name or 'Без имени'} (@{username_db or 'нет'})\n"
-                f"<b>Telegram ID:</b> <code>{telegram_id}</code>\n"
-                f"<b>Подписка истекла бы:</b> {premium_until_str}\n\n"
-                f"Пользователь получил уведомление об отмене.",
-                parse_mode='HTML'
-            )
-        else:
-            await update.message.reply_text(f"❌ Не удалось отменить премиум для {identifier}.")
+                    message += "📭 Платежей пока нет\n\n"
+                
+                # Статистика по методам оплаты
+                cursor.execute("SELECT COUNT(*) FROM payments WHERE status = 'succeeded'")
+                total_success = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM payments WHERE status = 'pending'")
+                total_pending = cursor.fetchone()[0]
+                
+                message += f"<b>Статистика:</b>\n"
+                message += f"• ✅ Успешных: {total_success}\n"
+                message += f"• ⏳ Ожидают: {total_pending}\n"
+                message += f"• ⚡ Telegram Stars: {'✅ Настроен' if telegram_stars.is_configured else '❌ Не настроен'}\n\n"
+                
+                cursor.close()
+            else:
+                message = "❌ Ошибка подключения к БД"
         
-        cursor.close()
-            
-    except Exception as e:
-        logger.error(f"Ошибка в admin_deactivate_command: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
-
-# ========== РАССЫЛКА СООБЩЕНИЙ ==========
-
-async def admin_broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда рассылки сообщений всем пользователям"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    # Проверяем, есть ли текст для рассылки
-    if not context.args:
         keyboard = [
-            [
-                InlineKeyboardButton("📝 Текстовая рассылка", callback_data="broadcast_text"),
-                InlineKeyboardButton("🖼️ Рассылка с фото", callback_data="broadcast_photo")
-            ],
-            [
-                InlineKeyboardButton("💎 Только премиум", callback_data="broadcast_premium"),
-                InlineKeyboardButton("🆓 Только бесплатные", callback_data="broadcast_free")
-            ],
-            [
-                InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-                InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")
-            ],
+            [InlineKeyboardButton("📊 Общая статистика", callback_data="admin_stats")],
+            [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
             [InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text(
-            "📨 <b>РАССЫЛКА СООБЩЕНИЙ</b>\n\n"
-            "<b>Выберите тип рассылки:</b>\n\n"
-            "• 📝 <b>Текстовая</b> - только текст\n"
-            "• 🖼️ <b>С фото</b> - текст + изображение\n"
-            "• 💎 <b>Премиум</b> - только премиум пользователям\n"
-            "• 🆓 <b>Бесплатные</b> - только бесплатным пользователям\n\n"
-            "<b>Или используйте команды:</b>\n"
-            "<code>/broadcast текст</code> - всем\n"
-            "<code>/broadcast_premium текст</code> - премиум\n"
-            "<code>/broadcast_photo</code> - с фото\n\n"
-            "<b>Внимание:</b> Сообщение будет отправлено ВСЕМ выбранным пользователям!",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-        return
-    
-    # Если есть аргументы - текстовая рассылка всем
-    message_text = " ".join(context.args)
-    context.user_data['broadcast_type'] = 'all'
-    context.user_data['broadcast_message'] = message_text
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Да, отправить всем", callback_data=f"confirm_broadcast_all_{hash(message_text[:30]) % 10000}"),
-            InlineKeyboardButton("❌ Отменить", callback_data="cancel_broadcast")
-        ],
-        [
-            InlineKeyboardButton("💎 Только премиум", callback_data=f"confirm_broadcast_premium_{hash(message_text[:30]) % 10000}"),
-            InlineKeyboardButton("🆓 Только бесплатные", callback_data=f"confirm_broadcast_free_{hash(message_text[:30]) % 10000}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"⚠️ <b>ПОДТВЕРЖДЕНИЕ РАССЫЛКИ</b>\n\n"
-        f"<b>Тип:</b> Всем пользователям\n"
-        f"<b>Сообщение:</b>\n{message_text[:400]}\n\n"
-        f"<b>Выберите аудиторию:</b>",
-        reply_markup=reply_markup,
-        parse_mode='HTML'
-    )
-
-async def admin_broadcast_premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Рассылка только премиум пользователям"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    if not context.args:
-        await update.message.reply_text(
-            "💎 <b>РАССЫЛКА ПРЕМИУМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-            "<b>Использование:</b>\n"
-            "<code>/broadcast_premium Ваш текст</code>\n\n"
-            "<b>Пример:</b>\n"
-            "<code>/broadcast_premium Специальное предложение для премиум пользователей!</code>\n\n"
-            "Сообщение будет отправлено только пользователям с активной премиум подпиской."
-        )
-        return
-    
-    message_text = " ".join(context.args)
-    context.user_data['broadcast_type'] = 'premium'
-    context.user_data['broadcast_message'] = message_text
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Да, отправить премиум", callback_data=f"confirm_broadcast_premium_{hash(message_text[:30]) % 10000}"),
-            InlineKeyboardButton("❌ Отменить", callback_data="cancel_broadcast")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"⚠️ <b>ПОДТВЕРЖДЕНИЕ РАССЫЛКИ</b>\n\n"
-        f"<b>Тип:</b> Только премиум пользователям\n"
-        f"<b>Сообщение:</b>\n{message_text[:400]}\n\n"
-        f"Подтверждаете отправку премиум пользователям?",
-        reply_markup=reply_markup,
-        parse_mode='HTML'
-    )
-
-async def admin_broadcast_photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало рассылки с фотографией"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    # Просим отправить фото
-    await update.message.reply_text(
-        "🖼️ <b>РАССЫЛКА С ФОТОГРАФИЕЙ</b>\n\n"
-        "1. Отправьте мне фотографию (как файл или фото)\n"
-        "2. Затем отправьте текст сообщения\n\n"
-        "Или нажмите /cancel для отмены",
-        parse_mode='HTML'
-    )
-    
-    context.user_data['awaiting_photo'] = True
-    context.user_data['broadcast_type'] = 'photo'
-    return AWAITING_PHOTO
-
-async def handle_broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка фотографии для рассылки"""
-    if update.message.photo:
-        # Берем самое большое фото
-        photo = update.message.photo[-1]
-        context.user_data['photo_file_id'] = photo.file_id
-        context.user_data['photo_caption'] = update.message.caption or ""
-    elif update.message.document and update.message.document.mime_type.startswith('image/'):
-        context.user_data['photo_file_id'] = update.message.document.file_id
-        context.user_data['photo_caption'] = update.message.caption or ""
-    else:
-        await update.message.reply_text("❌ Пожалуйста, отправьте фотографию.")
-        return AWAITING_PHOTO
-    
-    await update.message.reply_text(
-        "✅ Фотография получена!\n\n"
-        "Теперь отправьте текст сообщения для рассылки.\n"
-        "Или напишите /skip чтобы отправить только фото.",
-        parse_mode='HTML'
-    )
-    
-    context.user_data['awaiting_photo'] = False
-    context.user_data['awaiting_text'] = True
-    return AWAITING_TEXT
-
-async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка текста для рассылки с фото"""
-    message_text = update.message.text
-    
-    if message_text == '/skip':
-        message_text = ""
-    
-    context.user_data['broadcast_message'] = message_text
-    context.user_data['awaiting_text'] = False
-    
-    # Показываем предпросмотр
-    photo_file_id = context.user_data.get('photo_file_id')
-    caption = context.user_data.get('photo_caption', '')
-    full_text = f"{caption}\n\n{message_text}".strip()
-    
-    try:
-        await update.message.reply_photo(
-            photo=photo_file_id,
-            caption=f"🖼️ <b>ПРЕДПРОСМОТР РАССЫЛКИ</b>\n\n{full_text[:800]}\n\n"
-                   f"<i>Это сообщение с фото будет отправлено выбранной аудитории.</i>",
-            parse_mode='HTML'
-        )
-    except:
-        await update.message.reply_text(
-            f"📋 <b>ПРЕДПРОСМОТР РАССЫЛКИ</b>\n\n"
-            f"<b>Фото:</b> ✅ загружено\n"
-            f"<b>Текст:</b>\n{full_text[:400]}\n\n"
-            f"<i>Это сообщение с фото будет отправлено выбранной аудитории.</i>",
-            parse_mode='HTML'
-        )
-    
-    # Предлагаем выбрать аудиторию
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Всем", callback_data=f"confirm_photo_all_{hash(full_text[:30]) % 10000}"),
-            InlineKeyboardButton("💎 Премиум", callback_data=f"confirm_photo_premium_{hash(full_text[:30]) % 10000}")
-        ],
-        [
-            InlineKeyboardButton("🆓 Бесплатные", callback_data=f"confirm_photo_free_{hash(full_text[:30]) % 10000}"),
-            InlineKeyboardButton("❌ Отменить", callback_data="cancel_broadcast")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "⚠️ <b>ВЫБЕРИТЕ АУДИТОРИЮ</b>\n\n"
-        "Кому отправить это сообщение с фото?",
-        reply_markup=reply_markup,
-        parse_mode='HTML'
-    )
-    
-    return ConversationHandler.END
-
-async def broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена рассылки"""
-    await update.message.reply_text("❌ Рассылка отменена.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-async def admin_broadcast_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тестовая рассылка (только себе)"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    if not context.args:
-        await update.message.reply_text(
-            "📨 <b>ТЕСТОВАЯ РАССЫЛКА</b>\n\n"
-            "<b>Использование:</b>\n"
-            "<code>/broadcast_test Текст сообщения</code>\n\n"
-            "<b>Пример:</b>\n"
-            "<code>/broadcast_test Проверка рассылки</code>\n\n"
-            "Сообщение будет отправлено только вам для проверки."
-        )
-        return
-    
-    message_text = " ".join(context.args)
-    
-    try:
-        # Отправляем тестовое сообщение себе
-        await update.message.reply_text(
-            f"📨 <b>ТЕСТОВАЯ РАССЫЛКА</b>\n\n{message_text}\n\n"
-            f"<i>Это тестовое сообщение. В реальной рассылке оно будет отправлено всем пользователям.</i>",
-            parse_mode='HTML'
-        )
-        
-        await update.message.reply_text(
-            f"✅ Тестовое сообщение отправлено вам.\n\n"
-            f"Для отправки всем пользователям используйте:\n"
-            f"<code>/broadcast {message_text}</code>",
-            parse_mode='HTML'
-        )
+        await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
         
     except Exception as e:
-        logger.error(f"Ошибка тестовой рассылки: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
-
-# ========== ФУНКЦИИ РАССЫЛКИ ==========
-
-async def send_text_broadcast(context: ContextTypes.DEFAULT_TYPE, message_text: str, target_type: str, admin_id: int):
-    """Отправка текстовой рассылки"""
-    try:
-        conn = db.get_connection()
-        if not conn:
-            return 0, 0, []
-        
-        cursor = conn.cursor()
-        
-        # Выбираем пользователей по типу
-        if target_type == 'premium':
-            cursor.execute("""
-                SELECT telegram_id FROM users 
-                WHERE telegram_id IS NOT NULL 
-                AND is_premium = TRUE
-            """)
-            title = "💎 ПРЕМИУМ РАССЫЛКА"
-        elif target_type == 'free':
-            cursor.execute("""
-                SELECT telegram_id FROM users 
-                WHERE telegram_id IS NOT NULL 
-                AND is_premium = FALSE
-            """)
-            title = "📢 ОБЪЯВЛЕНИЕ"
-        else:  # all
-            cursor.execute("SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL")
-            title = "📢 ВАЖНОЕ ОБЪЯВЛЕНИЕ"
-        
-        users = cursor.fetchall()
-        cursor.close()
-        
-        if not users:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=f"❌ Нет пользователей для рассылки типа: {target_type}"
-            )
-            return 0, 0, []
-        
-        total_users = len(users)
-        sent_count = 0
-        failed_users = []
-        
-        # Отправляем прогресс начала
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"⏳ <b>НАЧАЛАСЬ РАССЫЛКА</b>\n\n"
-                 f"Тип: {target_type}\n"
-                 f"Пользователей: {total_users}\n"
-                 f"Сообщение: {message_text[:100]}...",
-            parse_mode='HTML'
-        )
-        
-        # Отправляем сообщение каждому пользователю
-        for i, (telegram_id,) in enumerate(users, 1):
-            try:
-                await context.bot.send_message(
-                    chat_id=telegram_id,
-                    text=f"{title}\n\n{message_text}\n\n"
-                         f"<i>С уважением, команда НеЗабудьОплатить</i>",
-                    parse_mode='HTML'
-                )
-                sent_count += 1
-                
-                # Логируем прогресс
-                if i % 20 == 0:
-                    progress = i / total_users * 100
-                    logger.info(f"📨 {target_type}: отправлено {i}/{total_users} ({progress:.1f}%)")
-                
-                # Небольшая задержка
-                import asyncio
-                await asyncio.sleep(0.03)
-                
-            except Exception as e:
-                logger.error(f"Ошибка отправки пользователю {telegram_id}: {e}")
-                failed_users.append(telegram_id)
-        
-        # Отчет
-        success_rate = (sent_count / total_users * 100) if total_users > 0 else 0
-        await send_broadcast_report(context, admin_id, sent_count, total_users, 
-                                  failed_users, message_text, target_type, 'text')
-        
-        return sent_count, total_users, failed_users
-        
-    except Exception as e:
-        logger.error(f"Критическая ошибка рассылки: {e}")
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"❌ <b>КРИТИЧЕСКАЯ ОШИБКА РАССЫЛКИ</b>\n\n{str(e)[:500]}",
-            parse_mode='HTML'
-        )
-        return 0, 0, []
-
-async def send_photo_broadcast(context: ContextTypes.DEFAULT_TYPE, photo_file_id: str, 
-                             caption: str, message_text: str, target_type: str, admin_id: int):
-    """Отправка рассылки с фотографией"""
-    try:
-        conn = db.get_connection()
-        if not conn:
-            return 0, 0, []
-        
-        cursor = conn.cursor()
-        
-        # Выбираем пользователей по типу
-        if target_type == 'premium':
-            cursor.execute("""
-                SELECT telegram_id FROM users 
-                WHERE telegram_id IS NOT NULL 
-                AND is_premium = TRUE
-            """)
-        elif target_type == 'free':
-            cursor.execute("""
-                SELECT telegram_id FROM users 
-                WHERE telegram_id IS NOT NULL 
-                AND is_premium = FALSE
-            """)
-        else:  # all
-            cursor.execute("SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL")
-        
-        users = cursor.fetchall()
-        cursor.close()
-        
-        if not users:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=f"❌ Нет пользователей для рассылки типа: {target_type}"
-            )
-            return 0, 0, []
-        
-        total_users = len(users)
-        sent_count = 0
-        failed_users = []
-        
-        # Формируем полный текст
-        full_caption = f"{caption}\n\n{message_text}".strip() if message_text else caption
-        
-        # Отправляем прогресс начала
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"🖼️ <b>НАЧАЛАСЬ РАССЫЛКА С ФОТО</b>\n\n"
-                 f"Тип: {target_type}\n"
-                 f"Пользователей: {total_users}",
-            parse_mode='HTML'
-        )
-        
-        # Отправляем фото каждому пользователю
-        for i, (telegram_id,) in enumerate(users, 1):
-            try:
-                await context.bot.send_photo(
-                    chat_id=telegram_id,
-                    photo=photo_file_id,
-                    caption=f"📢 <b>ВАЖНОЕ ОБЪЯВЛЕНИЕ</b>\n\n{full_caption}\n\n"
-                           f"<i>С уважением, команда НеЗабудьОплатить</i>",
-                    parse_mode='HTML'
-                )
-                sent_count += 1
-                
-                # Логируем прогресс
-                if i % 15 == 0:  # Реже из-за фото
-                    progress = i / total_users * 100
-                    logger.info(f"🖼️ {target_type}: отправлено {i}/{total_users} ({progress:.1f}%)")
-                
-                # Большая задержка для фото
-                import asyncio
-                await asyncio.sleep(0.1)
-                
-            except Exception as e:
-                logger.error(f"Ошибка отправки фото пользователю {telegram_id}: {e}")
-                failed_users.append(telegram_id)
-        
-        # Отчет
-        await send_broadcast_report(context, admin_id, sent_count, total_users, 
-                                  failed_users, f"[ФОТО] {full_caption[:100]}...", 
-                                  target_type, 'photo')
-        
-        return sent_count, total_users, failed_users
-        
-    except Exception as e:
-        logger.error(f"Критическая ошибка фото-рассылки: {e}")
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"❌ <b>КРИТИЧЕСКАЯ ОШИБКА ФОТО-РАССЫЛКИ</b>\n\n{str(e)[:500]}",
-            parse_mode='HTML'
-        )
-        return 0, 0, []
-
-async def send_broadcast_report(context: ContextTypes.DEFAULT_TYPE, admin_id: int, 
-                              sent_count: int, total_users: int, failed_users: list,
-                              message_text: str, target_type: str, broadcast_type: str):
-    """Отправка отчета о рассылке"""
-    try:
-        success_rate = (sent_count / total_users * 100) if total_users > 0 else 0
-        
-        # Иконка типа рассылки
-        type_icon = "🖼️" if broadcast_type == 'photo' else "📝"
-        
-        # Текст типа аудитории
-        target_text = {
-            'all': 'всем пользователям',
-            'premium': 'премиум пользователям',
-            'free': 'бесплатным пользователям'
-        }.get(target_type, target_type)
-        
-        report = (
-            f"{type_icon} <b>ОТЧЕТ О РАССЫЛКЕ</b>\n\n"
-            f"<b>Тип:</b> {target_text}\n"
-            f"<b>Формат:</b> {'Фото + текст' if broadcast_type == 'photo' else 'Текст'}\n\n"
-            f"<b>Статистика:</b>\n"
-            f"• 👥 Всего получателей: {total_users}\n"
-            f"• ✅ Успешно отправлено: {sent_count}\n"
-            f"• ❌ Не отправлено: {len(failed_users)}\n"
-            f"• 📈 Успешность: {success_rate:.1f}%\n\n"
-            f"<b>Сообщение:</b>\n{message_text[:300]}"
-        )
-        
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=report,
-            parse_mode='HTML'
-        )
-        
-        # Если есть неудачные отправки
-        if failed_users:
-            failed_count = len(failed_users)
-            sample = "\n".join(map(str, failed_users[:20]))
-            
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=f"📋 <b>Не отправлено (первые 20 из {failed_count}):</b>\n\n{sample}",
-                parse_mode='HTML'
-            )
-            
-    except Exception as e:
-        logger.error(f"Ошибка отправки отчета: {e}")
+        logger.error(f"Ошибка admin_payments_handler: {e}")
+        await query.edit_message_text(f"❌ Ошибка: {str(e)[:100]}")
 
 # ========== ОБРАБОТЧИК КНОПОК ==========
 
@@ -1728,84 +1342,108 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Или нажмите на одну из кнопок ниже:",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                    [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
+                    [InlineKeyboardButton("⭐ Премиум", callback_data="premium_info")],
                     [InlineKeyboardButton("🆘 Помощь", callback_data="help_btn")]
                 ]),
                 parse_mode='HTML'
             )
             
         elif query.data == "list":
-            # Вызываем функцию обработки списка напоминаний
             await handle_list_button(update, context)
             
         elif query.data == "premium_info":
-            # Создаем временный update для premium_command
-            class FakeMessage:
-                def __init__(self, user):
-                    self.from_user = user
-                    self.text = "/premium"
-                    self.chat_id = user.id
-                
-                async def reply_text(self, text, **kwargs):
-                    return await query.edit_message_text(text, **kwargs)
+            await premium_command(update, context)
             
-            fake_msg = FakeMessage(query.from_user)
-            fake_update = Update(update_id=query.id, message=fake_msg, callback_query=query)
+        elif query.data == "stars_payment":
+            await stars_payment_handler(update, context)
             
-            await premium_command(fake_update, context)
+        elif query.data == "manual_payment":
+            await manual_payment_handler(update, context)
             
-        elif query.data == "buy_premium":
-            await query.edit_message_text(
-                "💎 <b>ПРЕМИУМ ПОДПИСКА</b>\n\n"
-                "Для покупки премиум подписки используйте команду /buy\n\n"
-                "Или выберите вариант подписки:",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("1 месяц - 299₽", callback_data="buy_1"),
-                        InlineKeyboardButton("3 месяца - 799₽", callback_data="buy_3")
-                    ],
-                    [
-                        InlineKeyboardButton("12 месяцев - 1990₽", callback_data="buy_12"),
-                        InlineKeyboardButton("🎁 Тест 7 дней", callback_data="trial")
-                    ],
-                    [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data.startswith("buy_"):
-            period = query.data.split("_")[1]
+        elif query.data.startswith("stars_buy_"):
+            period = query.data.split("_")[2]
             if period in PREMIUM_PRICES:
                 price_info = PREMIUM_PRICES[period]
+                user = query.from_user
                 
-                if yookassa.is_configured():
+                # Создаем инвойс для Telegram Stars
+                try:
                     await query.edit_message_text(
-                        f"💳 <b>ОПЛАТА {price_info['text'].upper()} ПОДПИСКИ</b>\n\n"
-                        f"Сумма: {price_info['amount']}₽\n\n"
-                        "Интеграция с ЮKassa в процессе настройки.\n"
-                        "Скоро здесь будет ссылка для оплаты!\n\n"
-                        "А пока администратор может активировать вам премиум вручную.",
+                        f"⭐ <b>СОЗДАНИЕ СЧЕТА...</b>\n\n"
+                        f"Подписка: {price_info['text']}\n"
+                        f"Стоимость: {price_info['stars']} Stars\n\n"
+                        f"<i>Сейчас откроется окно оплаты...</i>",
                         parse_mode='HTML'
                     )
-                else:
-                    keyboard = [
-                        [InlineKeyboardButton("✅ Я оплатил", callback_data=f"manual_paid_{period}")],
-                        [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")]
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    await query.edit_message_text(
-                        f"💳 <b>ОПЛАТА {price_info['text'].upper()} ПОДПИСКИ</b>\n\n"
-                        f"Сумма: {price_info['amount']}₽\n\n"
-                        "Для оплаты:\n"
-                        "1. Переведите на карту:\n"
-                        "<code>2204 1801 8490 6030</code>\n"
-                        "2. В комментарии укажите ваш username\n"
-                        "3. Нажмите '✅ Я оплатил'\n\n"
-                        "Администратор активирует премиум вручную.",
-                        reply_markup=reply_markup,
-                        parse_mode='HTML'
+                    # Отправляем инвойс
+                    await context.bot.send_invoice(
+                        chat_id=user.id,
+                        title=f"Премиум подписка на {price_info['text']}",
+                        description="Доступ к неограниченным напоминаниям и расширенным функциям",
+                        payload=f"premium_{period}",
+                        provider_token=telegram_stars.provider_token if telegram_stars.is_configured else None,
+                        currency="XTR",  # Код валюты Telegram Stars
+                        prices=[
+                            LabeledPrice(label="Премиум подписка", amount=price_info['stars'] * 100)
+                        ],
+                        max_tip_amount=50000,
+                        suggested_tip_amounts=[5000, 10000, 25000],
+                        start_parameter=f"premium_{user.id}",
+                        need_name=False,
+                        need_phone_number=False,
+                        need_email=False,
+                        need_shipping_address=False,
+                        is_flexible=False
                     )
+                    
+                except Exception as e:
+                    logger.error(f"Ошибка отправки инвойса: {e}")
+                    
+                    if "provider_token" in str(e).lower():
+                        await query.edit_message_text(
+                            f"❌ <b>TELEGRAM STARS НЕ НАСТРОЕН</b>\n\n"
+                            f"Администратор еще не настроил платежи через Stars.\n\n"
+                            f"<b>Используйте ручную оплату:</b>",
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton("💳 Ручная оплата", callback_data=f"manual_buy_{period}")],
+                                [InlineKeyboardButton("↩️ Назад", callback_data="stars_payment")]
+                            ]),
+                            parse_mode='HTML'
+                        )
+                    else:
+                        await query.edit_message_text(
+                            f"❌ Ошибка создания счета: {str(e)[:100]}"
+                        )
+            else:
+                await query.edit_message_text("❌ Неверный период подписки.")
+                
+        elif query.data.startswith("manual_buy_"):
+            # Ручная оплата (старая логика сохранена)
+            period = query.data.split("_")[2]
+            if period in PREMIUM_PRICES:
+                price_info = PREMIUM_PRICES[period]
+                user = query.from_user
+                
+                # Формируем инструкции для ручной оплаты
+                instructions = manual_payments.format_payment_instructions(
+                    amount=price_info['stars'],  # Используем stars как сумму в рублях
+                    period=price_info['text'],
+                    username=user.username or str(user.id)
+                )
+                
+                keyboard = [
+                    [InlineKeyboardButton("✅ Я оплатил", callback_data=f"manual_paid_{period}")],
+                    [InlineKeyboardButton("⭐ Telegram Stars", callback_data=f"stars_buy_{period}")],
+                    [InlineKeyboardButton("↩️ Назад", callback_data="manual_payment")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(
+                    instructions,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
             else:
                 await query.edit_message_text("❌ Неверный период подписки.")
                 
@@ -1821,9 +1459,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     until_date = premium_status.get('premium_until')
                     if until_date:
                         until_str = until_date.strftime('%d.%m.%Y') if hasattr(until_date, 'strftime') else str(until_date)
-                        message = f"💎 <b>ПРЕМИУМ СТАТУС</b>\n\nВаш премиум действует до: <b>{until_str}</b>"
+                        message = f"⭐ <b>ПРЕМИУМ СТАТУС</b>\n\nВаш премиум действует до: <b>{until_str}</b>"
                     else:
-                        message = "💎 <b>ПРЕМИУМ СТАТУС</b>\n\nУ вас активна бессрочная премиум подписка!"
+                        message = "⭐ <b>ПРЕМИУМ СТАТУС</b>\n\nУ вас активна бессрочная премиум подписка!"
                     
                     keyboard = [
                         [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
@@ -1832,7 +1470,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     message = "🆓 <b>ПРЕМИУМ СТАТУС</b>\n\nУ вас нет активной премиум подписки."
                     keyboard = [
-                        [InlineKeyboardButton("💎 Купить премиум", callback_data="buy_premium")],
+                        [InlineKeyboardButton("⭐ Купить премиум", callback_data="premium_info")],
                         [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")]
                     ]
                 
@@ -1857,7 +1495,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 if db.delete_reminder(user_id, reminder_id):
-                    # После удаления показываем обновленный список
                     await handle_list_button(update, context)
                 else:
                     await query.edit_message_text("❌ Не удалось удалить напоминание.")
@@ -1867,17 +1504,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
         elif query.data == "help_btn":
             await query.edit_message_text(
-                "<b>🔔 НеЗабудьОплатить — помощь</b>\n\n"
+                "<b>🔔 НеЗабудьОплатить v2.0 — помощь</b>\n\n"
                 "<b>Основные команды:</b>\n"
-                "• /start - начать работу\n"
-                "• /new - создать напоминание\n"
-                "• /list - список напоминаний\n"
-                "• /premium - премиум подписка\n"
-                "• /buy - купить премиум\n"
-                "• /status - статус бота\n"
-                "• /help - эта справка\n\n"
+                "• /start — начать работу\n"
+                "• /new — создать напоминание\n"
+                "• /list — список напоминаний\n"
+                "• /premium — премиум подписка\n"
+                "• /status — статус бота\n"
+                "• /help — эта справка\n\n"
                 f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний\n"
                 "<b>Уведомления:</b> каждый день в 10:00 по Москве\n\n"
+                "<b>Способы оплаты премиума:</b>\n"
+                "1. ⭐ Telegram Stars (автоматическая оплата)\n"
+                "2. 💳 Ручная оплата (карта/СБП/крипто)\n\n"
                 "<i>По вопросам обращайтесь к администратору</i>",
                 parse_mode='HTML'
             )
@@ -1892,9 +1531,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data == "admin_users":
             await admin_users_handler(query, context)
             
+        elif query.data == "admin_payments":
+            await admin_payments_handler(update, context)
+            
         elif query.data == "admin_activate":
             await query.edit_message_text(
-                "💎 <b>АКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
+                "⭐ <b>АКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
                 "Используйте команду:\n"
                 "<code>/admin_activate @username 30</code>\n\n"
                 "Где 30 - количество дней премиума.\n\n"
@@ -1916,31 +1558,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='HTML'
             )
             
-        elif query.data == "test_admin_notify":
-            """Тест уведомлений админу через кнопку"""
-            if query.from_user.id != ADMIN_ID:
-                await query.edit_message_text("❌ Доступ запрещен.")
-                return
-            
-            try:
-                await context.bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text="🔔 <b>ТЕСТ ЧЕРЕЗ КНОПКУ</b>\n\n"
-                         "✅ Кнопочные уведомления работают!\n\n"
-                         "Теперь попробуйте реальную оплату.",
-                    parse_mode='HTML'
-                )
-                
-                await query.edit_message_text(
-                    "✅ <b>Тест завершен!</b>\n\n"
-                    "Проверьте уведомление от бота.",
-                    parse_mode='HTML'
-                )
-                
-            except Exception as e:
-                logger.error(f"Ошибка test_admin_notify button: {e}")
-                await query.edit_message_text(f"❌ Ошибка: {str(e)[:100]}")
-                
         elif query.data == "trial":
             user = query.from_user
             user_id = db.get_or_create_user(user.id, user.username, user.first_name, user.last_name)
@@ -1952,48 +1569,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "• ♾️ Неограниченные напоминания\n"
                     "• 🔄 Повторяющиеся платежи\n"
                     "• 🔔 Уведомления за 3 и 7 дней\n\n"
-                    "Наслаждайтесь! Если понравится - сможете оформить полную подписку. 💎",
+                    "Наслаждайтесь! Если понравится - сможете оформить полную подписку. ⭐",
                     parse_mode='HTML'
                 )
             else:
                 await query.edit_message_text("❌ Ошибка активации тестового периода.")
                 
-        # ========== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК КНОПКИ "Я ОПЛАТИЛ" ==========
+        # ========== ОБРАБОТЧИК КНОПКИ "Я ОПЛАТИЛ" (ручная оплата) ==========
         elif query.data.startswith("manual_paid_"):
             """Обработчик кнопки 'Я оплатил' с уведомлением админу"""
             try:
-                # Получаем период из callback_data: manual_paid_1 → period=1
                 period = query.data.split("_")[2] if len(query.data.split("_")) > 2 else "1"
                 
                 if period in PREMIUM_PRICES:
                     price_info = PREMIUM_PRICES[period]
                     user = query.from_user
                     
-                    # 1. Логируем нажатие
                     logger.info(f"💰 Кнопка 'Я оплатил' нажата: user_id={user.id}, username=@{user.username}, period={period}")
-                    print(f"DEBUG: Кнопка 'Я оплатил' нажата пользователем {user.id}")
                     
-                    # 2. Сообщение пользователю
+                    # Сообщение пользователю
                     await query.edit_message_text(
                         f"✅ <b>Заявка принята!</b>\n\n"
                         f"<b>Детали оплаты:</b>\n"
                         f"• Подписка: {price_info['text']}\n"
-                        f"• Сумма: {price_info['amount']}₽\n"
+                        f"• Сумма: {price_info['stars']}₽\n"
                         f"• Срок: {price_info['days']} дней\n\n"
                         f"<b>Что дальше:</b>\n"
                         f"1. Администратор получил уведомление\n"
                         f"2. Он активирует ваш премиум вручную\n"
                         f"3. Вы получите сообщение о активации\n\n"
                         f"Обычно это занимает до 24 часов.\n\n"
-                        f"Спасибо за покупку! 💎",
+                        f"Спасибо за покупку! 💰",
                         parse_mode='HTML'
                     )
                     
-                    # 3. ВАЖНОЕ ИСПРАВЛЕНИЕ: Проверяем ADMIN_ID
-                    print(f"DEBUG: ADMIN_ID = {ADMIN_ID}, type = {type(ADMIN_ID)}")
-                    print(f"DEBUG: Текущий пользователь ID = {user.id}")
-                    
-                    # Проверяем, что ADMIN_ID валидный
+                    # Проверяем ADMIN_ID
                     if not ADMIN_ID or ADMIN_ID == 0:
                         logger.error("❌ ADMIN_ID не настроен!")
                         await query.message.reply_text(
@@ -2002,14 +1612,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                         return
                     
-                    # 4. Формируем уведомление для администратора
+                    # Формируем уведомление для администратора
                     try:
                         username_display = f"@{user.username}" if user.username else f"ID_{user.id}"
                         first_name_display = user.first_name or "Не указано"
                         last_name_display = user.last_name or "Не указана"
                         
                         admin_message = (
-                            f"💰 <b>НОВАЯ ЗАЯВКА НА ОПЛАТУ!</b>\n\n"
+                            f"💰 <b>НОВАЯ ЗАЯВКА НА РУЧНУЮ ОПЛАТУ!</b>\n\n"
                             f"<b>👤 Пользователь:</b>\n"
                             f"├ Имя: {first_name_display}\n"
                             f"├ Фамилия: {last_name_display}\n"
@@ -2017,7 +1627,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"└ ID: <code>{user.id}</code>\n\n"
                             f"<b>📦 Подписка:</b>\n"
                             f"├ Период: {price_info['text']}\n"
-                            f"├ Сумма: {price_info['amount']}₽\n"
+                            f"├ Сумма: {price_info['stars']}₽\n"
                             f"└ Дней: {price_info['days']}\n\n"
                             f"<b>⚡ Быстрая активация:</b>\n"
                             f"<code>/admin_activate {username_display.replace('@', '')} {price_info['days']}</code>\n"
@@ -2027,48 +1637,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"<i>Для просмотра всех заявок: /admin_requests</i>"
                         )
                         
-                        # 5. Отправляем уведомление администратору
-                        print(f"DEBUG: Пробуем отправить сообщение администратору {ADMIN_ID}")
-                        
+                        # Отправляем уведомление администратору
                         sent_message = await context.bot.send_message(
                             chat_id=ADMIN_ID,
                             text=admin_message,
                             parse_mode='HTML'
                         )
                         
-                        # 6. Логируем успешную отправку
                         logger.info(f"✅ Уведомление отправлено администратору {ADMIN_ID}. Message ID: {sent_message.message_id}")
-                        print(f"✅ УВЕДОМЛЕНИЕ ОТПРАВЛЕНО АДМИНИСТРАТОРУ!")
-                        print(f"DEBUG: Текст уведомления:\n{admin_message}")
                         
                     except Exception as admin_error:
-                        # 7. ДЕТАЛЬНАЯ ОБРАБОТКА ОШИБОК
                         error_msg = str(admin_error)
                         logger.error(f"❌ Ошибка отправки уведомления админу: {error_msg}")
-                        print(f"❌ ОШИБКА ОТПРАВКИ АДМИНУ: {error_msg}")
                         
-                        # Определяем тип ошибки
-                        if "chat not found" in error_msg.lower():
-                            error_info = "Чат с администратором не найден. Проверьте ADMIN_ID."
-                        elif "bot was blocked" in error_msg.lower():
-                            error_info = "Бот заблокирован администратором."
-                        elif "Forbidden" in error_msg:
-                            error_info = "У бота нет доступа к чату администратора."
-                        else:
-                            error_info = f"Техническая ошибка: {error_msg[:100]}"
-                        
-                        # Сообщаем пользователю
                         await query.message.reply_text(
                             f"⚠️ <b>Внимание!</b>\n\n"
                             f"Не удалось автоматически уведомить администратора.\n\n"
                             f"<b>Ваши данные для ручной активации:</b>\n"
                             f"• Ваш ID: <code>{user.id}</code>\n"
                             f"• Подписка: {price_info['text']}\n"
-                            f"• Сумма: {price_info['amount']}₽\n\n"
+                            f"• Сумма: {price_info['stars']}₽\n\n"
                             f"<b>Сообщите администратору:</b>\n"
                             f"Используйте команду:\n"
-                            f"<code>/admin_activate {user.id} {price_info['days']}</code>\n\n"
-                            f"{error_info}",
+                            f"<code>/admin_activate {user.id} {price_info['days']}</code>",
                             parse_mode='HTML'
                         )
                         
@@ -2081,7 +1672,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
             except Exception as e:
                 logger.error(f"❌ Общая ошибка в обработчике manual_paid_: {e}", exc_info=True)
-                print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
                 
                 try:
                     await query.edit_message_text(
@@ -2092,6 +1682,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except:
                     pass
                 
+        # Админ рассылка (оставлена без изменений)
         elif query.data == "broadcast_text":
             await query.edit_message_text(
                 "📝 <b>ТЕКСТОВАЯ РАССЫЛКА</b>\n\n"
@@ -2103,7 +1694,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([
                     [
                         InlineKeyboardButton("👥 Всем", callback_data="broadcast_all_menu"),
-                        InlineKeyboardButton("💎 Премиум", callback_data="broadcast_premium_menu")
+                        InlineKeyboardButton("⭐ Премиум", callback_data="broadcast_premium_menu")
                     ],
                     [
                         InlineKeyboardButton("🆓 Бесплатные", callback_data="broadcast_free_menu"),
@@ -2113,84 +1704,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='HTML'
             )
             
-        elif query.data == "broadcast_photo":
-            await query.edit_message_text(
-                "🖼️ <b>РАССЫЛКА С ФОТО</b>\n\n"
-                "Используйте команду:\n"
-                "<code>/broadcast_photo</code>\n\n"
-                "Затем отправьте фото и текст.\n\n"
-                "<b>Или вернитесь в меню рассылки:</b>",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "broadcast_premium":
-            await query.edit_message_text(
-                "💎 <b>РАССЫЛКА ПРЕМИУМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-                "Используйте команду:\n"
-                "<code>/broadcast_premium Ваш текст</code>\n\n"
-                "<b>Пример:</b>\n"
-                "<code>/broadcast_premium Специальное предложение для наших премиум пользователей!</code>\n\n"
-                "<b>Или вернитесь в меню рассылки:</b>",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "broadcast_free":
-            await query.edit_message_text(
-                "🆓 <b>РАССЫЛКА БЕСПЛАТНЫМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-                "Используйте команду:\n"
-                "<code>/broadcast Ваш текст</code>\n\n"
-                "А затем выберите 'Только бесплатные'\n\n"
-                "<b>Или вернитесь в меню рассылки:</b>",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "broadcast_all_menu":
-            await query.edit_message_text(
-                "👥 <b>РАССЫЛКА ВСЕМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-                "Используйте команду:\n"
-                "<code>/broadcast Ваш текст</code>\n\n"
-                "Или вернитесь в меню рассылки:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "broadcast_premium_menu":
-            await query.edit_message_text(
-                "💎 <b>РАССЫЛКА ПРЕМИУМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-                "Используйте команду:\n"
-                "<code>/broadcast_premium Ваш текст</code>\n\n"
-                "Или вернитесь в меню рассылки:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "broadcast_free_menu":
-            await query.edit_message_text(
-                "🆓 <b>РАССЫЛКА БЕСПЛАТНЫМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-                "Используйте команду:\n"
-                "<code>/broadcast Ваш текст</code>\n\n"
-                "А затем выберите 'Только бесплатные'\n\n"
-                "Или вернитесь в меню рассылки:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        # ОБРАБОТЧИКИ ПОДТВЕРЖДЕНИЯ РАССЫЛКИ
         elif query.data.startswith("confirm_broadcast_all_"):
             await handle_confirm_broadcast(query, context, 'all', 'text')
             
@@ -2219,52 +1732,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка в button_handler: {e}")
         await query.message.reply_text("⚠️ Произошла ошибка. Попробуйте команду /start")
 
-async def handle_confirm_broadcast(query, context, target_type, broadcast_type):
-    """Обработка подтверждения рассылки"""
-    if query.from_user.id != ADMIN_ID:
-        await query.edit_message_text("❌ Доступ запрещен.")
-        return
-    
-    await query.edit_message_text(
-        f"⏳ <b>НАЧИНАЮ РАССЫЛКУ...</b>\n\n"
-        f"Тип: {target_type}\n"
-        f"Формат: {'Фото' if broadcast_type == 'photo' else 'Текст'}\n\n"
-        f"<i>Это может занять несколько минут. Вы получите отчет по завершении.</i>",
-        parse_mode='HTML'
-    )
-    
-    import asyncio
-    
-    if broadcast_type == 'photo':
-        # Фото рассылка
-        photo_file_id = context.user_data.get('photo_file_id')
-        caption = context.user_data.get('photo_caption', '')
-        message_text = context.user_data.get('broadcast_message', '')
-        
-        if not photo_file_id:
-            await query.edit_message_text("❌ Ошибка: фото не найдено.")
-            return
-        
-        asyncio.create_task(
-            send_photo_broadcast(context, photo_file_id, caption, message_text, 
-                               target_type, ADMIN_ID)
-        )
-    else:
-        # Текстовая рассылка
-        message_text = context.user_data.get('broadcast_message')
-        if not message_text:
-            await query.edit_message_text("❌ Ошибка: текст сообщения не найден.")
-            return
-        
-        asyncio.create_task(
-            send_text_broadcast(context, message_text, target_type, ADMIN_ID)
-        )
-    
-    # Очищаем данные
-    context.user_data.pop('broadcast_message', None)
-    context.user_data.pop('photo_file_id', None)
-    context.user_data.pop('photo_caption', None)
-
 # ========== АДМИН ОБРАБОТЧИКИ ==========
 
 async def admin_stats_handler(query, context):
@@ -2291,12 +1758,18 @@ async def admin_stats_handler(query, context):
             else:
                 total = premium = reminders = payments = 0
         
+        stars_stats = telegram_stars.get_payment_stats()
+        
         await query.edit_message_text(
-            f"📊 <b>СТАТИСТИКА БОТА</b>\n\n"
+            f"📊 <b>СТАТИСТИКА БОТА v2.0</b>\n\n"
             f"• 👥 Всего пользователей: {total}\n"
-            f"• 💎 Премиум пользователей: {premium}\n"
+            f"• ⭐ Премиум пользователей: {premium}\n"
             f"• 📝 Всего напоминаний: {reminders}\n"
             f"• 💰 Успешных платежей: {payments}\n\n"
+            f"<b>Telegram Stars:</b>\n"
+            f"• ⚡ Настроен: {'✅ Да' if stars_stats['configured'] else '❌ Нет'}\n"
+            f"• 🔐 Токен провайдера: {'✅ Есть' if stars_stats['has_provider_token'] else '❌ Нет'}\n"
+            f"• 🛡️ Секретный токен: {'✅ Есть' if stars_stats['has_secret_token'] else '❌ Нет'}\n\n"
             f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>",
             parse_mode='HTML'
         )
@@ -2331,7 +1804,7 @@ async def admin_users_handler(query, context):
         
         for i, (username, first_name, is_premium, created_at) in enumerate(users, 1):
             username_display = f"@{username}" if username else "нет username"
-            premium = "💎" if is_premium else "🆓"
+            premium = "⭐" if is_premium else "🆓"
             date_str = created_at.strftime('%d.%m') if hasattr(created_at, 'strftime') else str(created_at)[:10]
             
             message += f"{i}. {premium} {first_name or 'Без имени'} ({username_display}) - {date_str}\n"
@@ -2346,7 +1819,7 @@ async def admin_users_handler(query, context):
         
         keyboard = [
             [
-                InlineKeyboardButton("💎 Активировать", callback_data="admin_activate"),
+                InlineKeyboardButton("⭐ Активировать", callback_data="admin_activate"),
                 InlineKeyboardButton("🚫 Деактивировать", callback_data="admin_deactivate_menu")
             ],
             [InlineKeyboardButton("🔄 Обновить", callback_data="admin_users")]
@@ -2357,244 +1830,111 @@ async def admin_users_handler(query, context):
     except Exception as e:
         await query.edit_message_text(f"❌ Ошибка: {str(e)[:100]}")
 
+async def handle_confirm_broadcast(query, context, target_type, broadcast_type):
+    """Обработка подтверждения рассылки"""
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text("❌ Доступ запрещен.")
+        return
+    
+    await query.edit_message_text(
+        f"⏳ <b>НАЧИНАЮ РАССЫЛКУ...</b>\n\n"
+        f"Тип: {target_type}\n"
+        f"Формат: {'Фото' if broadcast_type == 'photo' else 'Текст'}\n\n"
+        f"<i>Это может занять несколько минут. Вы получите отчет по завершении.</i>",
+        parse_mode='HTML'
+    )
+    
+    # Импортируем здесь, чтобы избежать циклического импорта
+    from broadcast import send_text_broadcast, send_photo_broadcast
+    
+    if broadcast_type == 'photo':
+        photo_file_id = context.user_data.get('photo_file_id')
+        caption = context.user_data.get('photo_caption', '')
+        message_text = context.user_data.get('broadcast_message', '')
+        
+        if not photo_file_id:
+            await query.edit_message_text("❌ Ошибка: фото не найдено.")
+            return
+        
+        asyncio.create_task(
+            send_photo_broadcast(context, photo_file_id, caption, message_text, target_type, ADMIN_ID)
+        )
+    else:
+        message_text = context.user_data.get('broadcast_message')
+        if not message_text:
+            await query.edit_message_text("❌ Ошибка: текст сообщения не найден.")
+            return
+        
+        asyncio.create_task(
+            send_text_broadcast(context, message_text, target_type, ADMIN_ID)
+        )
+    
+    # Очищаем данные
+    context.user_data.pop('broadcast_message', None)
+    context.user_data.pop('photo_file_id', None)
+    context.user_data.pop('photo_caption', None)
+
 # ========== ТЕСТОВЫЕ КОМАНДЫ ==========
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тестовая команда /test"""
+    stars_stats = telegram_stars.get_payment_stats()
+    
     await update.message.reply_text(
-        f"✅ <b>Бот работает!</b>\n\n"
+        f"✅ <b>Бот работает! v2.0</b>\n\n"
         f"Время: {datetime.now().strftime('%H:%M:%S')}\n"
         f"ADMIN_ID: {ADMIN_ID}\n"
         f"Ваш ID: {update.effective_user.id}\n"
-        f"Вы админ: {'✅ Да' if update.effective_user.id == ADMIN_ID else '❌ Нет'}",
+        f"Вы админ: {'✅ Да' if update.effective_user.id == ADMIN_ID else '❌ Нет'}\n\n"
+        f"<b>Telegram Stars:</b>\n"
+        f"• Настроен: {'✅ Да' if stars_stats['configured'] else '❌ Нет'}\n"
+        f"• Провайдер токен: {'✅ Есть' if stars_stats['has_provider_token'] else '❌ Нет'}\n"
+        f"• Секретный токен: {'✅ Есть' if stars_stats['has_secret_token'] else '❌ Нет'}",
         parse_mode='HTML'
     )
 
-async def test_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тестовая команда для проверки уведомлений"""
+async def test_stars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тестовая команда для проверки Telegram Stars"""
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Команда только для администратора.")
         return
     
-    # Имитируем отправку уведомления
-    try:
-        await context.bot.send_message(
-            chat_id=update.effective_user.id,
-            text="🔔 <b>ТЕСТОВОЕ УВЕДОМЛЕНИЕ</b>\n\n"
-                 "Это тестовое сообщение от системы уведомлений.\n"
-                 "Если вы его получили, значит бот работает правильно! ✅",
-            parse_mode='HTML'
-        )
-        await update.message.reply_text("✅ Тестовое уведомление отправлено!")
-    except Exception as e:
-        logger.error(f"❌ Ошибка тестового уведомления: {e}")
-        await update.message.reply_text(f"❌ Ошибка отправки: {str(e)[:100]}")
-
-async def test_admin_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тестовая команда /test_admin - проверка уведомлений админу"""
-    user = update.effective_user
+    stars_stats = telegram_stars.get_payment_stats()
     
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    try:
-        test_message = (
-            f"🔔 <b>ТЕСТ УВЕДОМЛЕНИЙ АДМИНИСТРАТОРУ</b>\n\n"
-            f"✅ Система уведомлений работает!\n\n"
-            f"<b>Ваш ID администратора:</b> <code>{ADMIN_ID}</code>\n"
-            f"<b>Время:</b> {datetime.now().strftime('%H:%M:%S')}\n\n"
-            f"<i>Теперь протестируйте оплату от лица пользователя</i>"
-        )
-        
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=test_message,
-            parse_mode='HTML'
-        )
-        
-        await update.message.reply_text(
-            "✅ <b>Тестовое уведомление отправлено!</b>\n\n"
-            "Проверьте сообщения от бота.\n"
-            "Если получили - система работает!\n\n"
-            "<b>Теперь протестируйте оплату:</b>\n"
-            "1. Откройте бота как пользователь\n"
-            "2. 💎 Премиум → 1 месяц → ✅ Я оплатил\n"
-            "3. Вернитесь сюда и проверьте уведомление",
-            parse_mode='HTML'
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка test_admin_notify: {e}")
-        await update.message.reply_text(f"❌ Ошибка теста: {str(e)[:100]}")
-
-async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_requests - управление заявками на оплату"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text(
-            f"❌ <b>ДОСТУП ЗАПРЕЩЕН</b>\n\n"
-            f"Ваш ID: <code>{user.id}</code>\n"
-            f"Требуется ID: <code>{ADMIN_ID}</code>",
-            parse_mode='HTML'
-        )
-        return
-    
-    help_text = (
-        "💰 <b>УПРАВЛЕНИЕ ЗАЯВКАМИ НА ОПЛАТУ</b>\n\n"
-        
-        "<b>Когда пользователь нажимает '✅ Я оплатил':</b>\n"
-        "1. 📨 <b>Вам приходит уведомление</b> в этот чат\n"
-        "2. 👤 Пользователь получает подтверждение\n"
-        "3. ⚡ Вы активируете премиум командой:\n\n"
-        
-        "<code>/admin_activate @username ДНИ</code>\n\n"
-        
-        "<b>Примеры:</b>\n"
-        "<code>/admin_activate @ivanov 30</code> - на 30 дней\n"
-        "<code>/admin_activate 123456789 90</code> - по ID\n\n"
-        
-        "<b>Для тестирования:</b>\n"
-        "• /test_admin - тест уведомлений\n"
-        "• /admin_users - список пользователей"
+    test_message = (
+        f"🧪 <b>ТЕСТ TELEGRAM STARS v2.0</b>\n\n"
+        f"<b>Статус настройки:</b>\n"
+        f"• Настроен: {'✅ Да' if stars_stats['configured'] else '❌ Нет'}\n"
+        f"• Провайдер токен: {'✅ Есть' if stars_stats['has_provider_token'] else '❌ Нет'}\n"
+        f"• Секретный токен: {'✅ Есть' if stars_stats['has_secret_token'] else '❌ Нет'}\n\n"
     )
     
-    keyboard = [
-        [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
-         InlineKeyboardButton("💎 Активировать", callback_data="admin_activate")],
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-         InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")],
-        [InlineKeyboardButton("🧪 Тест уведомлений", callback_data="test_admin_notify")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
-
-# ========== КОМАНДА ДЛЯ ПРОСМОТРА ЗАЯВОК ==========
-
-async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_requests - просмотр заявок на оплату"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text(
-            f"❌ <b>ДОСТУП ЗАПРЕЩЕН</b>\n\n"
-            f"Ваш ID: <code>{user.id}</code>\n"
-            f"Требуется ID: <code>{ADMIN_ID}</code>\n\n"
-            f"<i>Эта команда только для администратора</i>",
-            parse_mode='HTML'
+    if stars_stats['configured']:
+        test_message += (
+            f"✅ <b>Telegram Stars настроен правильно!</b>\n\n"
+            f"<b>Для теста:</b>\n"
+            f"1. Используйте команду /premium\n"
+            f"2. Выберите '⭐ Telegram Stars'\n"
+            f"3. Выберите подписку\n"
+            f"4. Оплатите тестовыми Stars\n\n"
+            f"<b>Переменные окружения:</b>\n"
+            f"TELEGRAM_PROVIDER_TOKEN: {'✅ Установлен' if stars_stats['has_provider_token'] else '❌ Отсутствует'}\n"
+            f"TELEGRAM_PAYMENT_TOKEN: {'✅ Установлен' if stars_stats['has_secret_token'] else '❌ Отсутствует'}"
         )
-        return
+    else:
+        test_message += (
+            f"❌ <b>Telegram Stars не настроен!</b>\n\n"
+            f"<b>Необходимо установить в Render:</b>\n"
+            f"1. TELEGRAM_PROVIDER_TOKEN (от @BotFather)\n"
+            f"2. TELEGRAM_PAYMENT_TOKEN (секретный токен)\n\n"
+            f"<b>Инструкция:</b>\n"
+            f"1. Напишите @BotFather\n"
+            f"2. Выберите вашего бота\n"
+            f"3. Bot Settings → Payments\n"
+            f"4. Настройте платежи и получите токены"
+        )
     
-    try:
-        # Информационное сообщение
-        help_text = (
-            "💰 <b>УПРАВЛЕНИЕ ЗАЯВКАМИ НА ОПЛАТУ</b>\n\n"
-            
-            "<b>Когда пользователь нажимает '✅ Я оплатил':</b>\n"
-            "1. 📨 <b>Вам приходит уведомление</b> в этот чат\n"
-            "2. 👤 Пользователь получает подтверждение\n"
-            "3. ⏳ Вы активируете премиум вручную\n\n"
-            
-            "<b>Команды для активации:</b>\n"
-            "• <code>/admin_activate @username 30</code> - на 30 дней\n"
-            "• <code>/admin_activate @username 90</code> - на 90 дней\n"
-            "• <code>/admin_activate @username 365</code> - на год\n\n"
-            
-            "<b>Пример:</b>\n"
-            "<code>/admin_activate @ivanov_91 30</code>\n\n"
-            
-            "<b>Для поиска пользователей:</b>\n"
-            "• Используйте /admin_users\n"
-            "• Или кнопку '👥 Пользователи' в админ панели\n\n"
-            
-            "<b>Проверьте:</b>\n"
-            "1. Уведомления в этом чате\n"
-            "2. Логи в панели Render\n"
-            "3. Сообщения от пользователей"
-        )
-        
-        # Клавиатура
-        keyboard = [
-            [
-                InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
-                InlineKeyboardButton("💎 Активировать", callback_data="admin_activate")
-            ],
-            [
-                InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-                InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")
-            ],
-            [
-                InlineKeyboardButton("🔄 Проверить уведомления", callback_data="check_notifications")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
-        
-    except Exception as e:
-        logger.error(f"Ошибка в admin_requests_command: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
-
-# ========== НОВАЯ ТЕСТОВАЯ КОМАНДА ДЛЯ ПРОВЕРКИ УВЕДОМЛЕНИЙ ==========
-
-async def test_payment_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тестовая команда для проверки уведомлений о платежах"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    try:
-        # Тестовое уведомление
-        test_message = (
-            f"🧪 <b>ТЕСТ УВЕДОМЛЕНИЙ О ПЛАТЕЖАХ</b>\n\n"
-            f"✅ Система уведомлений работает!\n\n"
-            f"<b>Техническая информация:</b>\n"
-            f"• ADMIN_ID: <code>{ADMIN_ID}</code>\n"
-            f"• Ваш ID: <code>{user.id}</code>\n"
-            f"• Совпадение: {'✅ Да' if user.id == ADMIN_ID else '❌ Нет'}\n"
-            f"• Время: {datetime.now().strftime('%H:%M:%S')}\n\n"
-            f"<b>Если вы видите это сообщение:</b>\n"
-            f"1. Бот может отправлять вам сообщения ✅\n"
-            f"2. Теперь протестируйте кнопку '✅ Я оплатил'\n"
-            f"3. Откройте бота как пользователь\n"
-            f"4. 💎 Премиум → 1 месяц → ✅ Я оплатил"
-        )
-        
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=test_message,
-            parse_mode='HTML'
-        )
-        
-        await update.message.reply_text(
-            "✅ <b>Тестовое уведомление отправлено!</b>\n\n"
-            "Проверьте сообщения от бота.\n\n"
-            "<b>Если получили - переходите к тесту оплаты:</b>\n"
-            "1. Откройте @BotFather\n"
-            "2. Начните диалог с вашим ботом\n"
-            "3. 💎 Премиум → 1 месяц → ✅ Я оплатил\n"
-            "4. Вернитесь сюда и проверьте уведомление",
-            parse_mode='HTML'
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка test_payment_notify: {e}")
-        await update.message.reply_text(
-            f"❌ <b>ОШИБКА ТЕСТА!</b>\n\n"
-            f"Не удалось отправить тестовое сообщение.\n\n"
-            f"<b>Причина:</b>\n"
-            f"{str(e)[:200]}\n\n"
-            f"<b>Проверьте:</b>\n"
-            f"1. Правильный ли ADMIN_ID?\n"
-            f"2. Не заблокировали ли вы бота?\n"
-            f"3. Работает ли бот вообще?",
-            parse_mode='HTML'
-        )
+    await update.message.reply_text(test_message, parse_mode='HTML')
 
 # ========== ОБРАБОТЧИК ОШИБОК ==========
 
@@ -2613,9 +1953,10 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== ЗАПУСК БОТА ==========
 
 def main():
-    """Запуск бота с веб-сервером"""
+    """Запуск бота с поддержкой Telegram Stars"""
     print("=" * 60)
-    print("🚀 ЗАПУСК ТЕЛЕГРАМ БОТА «НеЗабудьОплатить»")
+    print("🚀 ЗАПУСК ТЕЛЕГРАМ БОТА «НеЗабудьОплатить v2.0»")
+    print("💰 Платежи: Telegram Stars + Ручная оплата")
     print("=" * 60)
     
     print(f"✅ Токен: {'найден' if TOKEN else 'НЕ НАЙДЕН'}")
@@ -2631,8 +1972,12 @@ def main():
     except Exception as e:
         print(f"❌ Ошибка БД: {e}")
     
-    # Проверка ЮKassa
-    print(f"💳 ЮKassa: {'настроена' if yookassa.is_configured() else 'НЕ настроена'}")
+    # Проверка Telegram Stars
+    stars_stats = telegram_stars.get_payment_stats()
+    print(f"⭐ Telegram Stars: {'✅ настроен' if stars_stats['configured'] else '❌ НЕ настроен'}")
+    if stars_stats['configured']:
+        print(f"   • Провайдер токен: {'✅ есть' if stars_stats['has_provider_token'] else '❌ нет'}")
+        print(f"   • Секретный токен: {'✅ есть' if stars_stats['has_secret_token'] else '❌ нет'}")
     
     # Создаем приложение бота
     app = Application.builder().token(TOKEN).build()
@@ -2650,7 +1995,7 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     
-    # ConversationHandler для рассылки с фото
+    # ConversationHandler для рассылки с фото (оставлен без изменений)
     broadcast_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('broadcast_photo', admin_broadcast_photo_command)],
         states={
@@ -2665,7 +2010,6 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("premium", premium_command))
-    app.add_handler(CommandHandler("buy", buy_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("admin_activate", admin_activate_command))
@@ -2674,12 +2018,15 @@ def main():
     app.add_handler(CommandHandler("broadcast_premium", admin_broadcast_premium_command))
     app.add_handler(CommandHandler("broadcast_test", admin_broadcast_test_command))
     app.add_handler(CommandHandler("test", test_command))
-    app.add_handler(CommandHandler("test_notify", test_notify_command))
-    app.add_handler(CommandHandler("test_admin", test_admin_notify_command))
-    app.add_handler(CommandHandler("test_payment", test_payment_notify))
+    app.add_handler(CommandHandler("test_stars", test_stars_command))
     app.add_handler(CommandHandler("admin_requests", admin_requests_command))
     app.add_handler(conv_handler)
     app.add_handler(broadcast_conv_handler)
+    
+    # Обработчики Telegram Stars
+    app.add_handler(PreCheckoutQueryHandler(stars_pre_checkout_handler))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, stars_successful_payment_handler))
+    
     app.add_handler(CallbackQueryHandler(button_handler))
     
     # Настраиваем планировщик уведомлений
@@ -2701,10 +2048,12 @@ def main():
     
     print("\n✅ Команды зарегистрированы")
     print("📝 Доступные команды:")
-    print("  • /start, /new, /list, /premium, /buy, /status, /help")
+    print("  • /start, /new, /list, /premium, /status, /help")
     print("  • /admin, /admin_activate, /admin_deactivate")
     print("  • /broadcast, /broadcast_premium, /broadcast_photo, /broadcast_test")
-    print("  • /test, /test_notify, /test_admin, /test_payment")
+    print("  • /test, /test_stars")
+    print("=" * 60)
+    print("⭐ Telegram Stars готов к работе!" if stars_stats['configured'] else "⚠️ Настройте Telegram Stars для автоматических платежей")
     print("=" * 60)
     
     # Запускаем веб-сервер в отдельном потоке
@@ -2723,12 +2072,10 @@ def main():
     print("🤖 Telegram бот запускается...")
     print("=" * 60)
     
-    # Запускаем бота (блокирующий вызов)
+    # Запускаем бота
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 # ========== ТОЧКА ВХОДА ==========
 
 if __name__ == "__main__":
     main()
-
-
