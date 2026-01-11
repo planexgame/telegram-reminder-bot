@@ -1770,7 +1770,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"Сумма: {price_info['amount']}₽\n\n"
                         "Для оплаты:\n"
                         "1. Переведите на карту:\n"
-                        "<code>2202 2000 1234 5678</code>\n"
+                        "<code>2204 1801 8490 6030</code>\n"
                         "2. В комментарии укажите ваш username\n"
                         "3. Нажмите '✅ Я оплатил'\n\n"
                         "Администратор активирует премиум вручную.",
@@ -2701,3 +2701,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
