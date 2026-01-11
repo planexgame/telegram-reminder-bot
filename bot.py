@@ -34,7 +34,7 @@ if not TOKEN:
 # Получаем ADMIN_ID
 try:
     ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
-    if ADMIN_ID == 786588687:
+    if ADMIN_ID == 0:
         logger.error("❌ ADMIN_ID не настроен! Установите переменную ADMIN_ID в Render.")
         print("=" * 50)
         print("❌ ОШИБКА: ADMIN_ID не настроен!")
@@ -1489,3 +1489,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
