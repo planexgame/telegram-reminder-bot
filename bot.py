@@ -1,7 +1,7 @@
 # bot.py
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time  # Добавили time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -413,6 +413,20 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка команды status: {e}")
         await update.message.reply_text("❌ Ошибка получения статуса.")
 
+# ========== ПРОСТАЯ ТЕСТОВАЯ КОМАНДА ==========
+async def test_simple(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Простая тестовая команда /test"""
+    try:
+        reminders = db.get_reminders_for_notification(days_before=1)
+        
+        await update.message.reply_text(
+            f"✅ Бот работает!\n"
+            f"📊 Напоминаний на завтра: {len(reminders)}\n"
+            f"🕒 Время сервера: {datetime.now().strftime('%H:%M:%S')}"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"✅ Бот работает! (Ошибка БД: {e})")
+
 # ========== ОБРАБОТЧИК КНОПОК ==========
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик inline-кнопок"""
@@ -582,6 +596,7 @@ def main():
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("testnotify", test_notify))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("test", test_simple))
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
     
@@ -592,7 +607,7 @@ def main():
         # 10:00 MSK = 7:00 UTC
         job_queue.run_daily(
             send_reminder_notifications,
-            time=datetime.time(hour=7, minute=0),  # 10:00 по Москве
+            time=time(hour=7, minute=0),  # 10:00 по Москве
             days=(0, 1, 2, 3, 4, 5, 6),  # Все дни недели
             name="daily_reminders"
         )
@@ -604,7 +619,7 @@ def main():
     app.add_error_handler(error_handler)
     
     logger.info("✅ Бот запущен и готов к работе!")
-    logger.info("📝 Доступные команды: /start, /new, /list, /help, /testnotify, /status")
+    logger.info("📝 Доступные команды: /start, /new, /list, /help, /test, /testnotify, /status")
     app.run_polling()
 
 if __name__ == "__main__":
