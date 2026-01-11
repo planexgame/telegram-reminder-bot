@@ -1885,7 +1885,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Сначала найдите username пользователя через кнопку '👥 Пользователи'",
                 parse_mode='HTML'
             )
-            
+            elif query.data == "test_admin_notify":
+    """Тест уведомлений админу через кнопку"""
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text("❌ Доступ запрещен.")
+        return
+    
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text="🔔 <b>ТЕСТ ЧЕРЕЗ КНОПКУ</b>\n\n"
+                 "✅ Кнопочные уведомления работают!\n\n"
+                 "Теперь попробуйте реальную оплату.",
+            parse_mode='HTML'
+        )
+        
+        await query.edit_message_text(
+            "✅ <b>Тест завершен!</b>\n\n"
+            "Проверьте уведомление от бота.",
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка test_admin_notify button: {e}")
+        await query.edit_message_text(f"❌ Ошибка: {str(e)[:100]}")
         elif query.data == "trial":
             user = query.from_user
             user_id = db.get_or_create_user(user.id, user.username, user.first_name, user.last_name)
@@ -1902,15 +1925,95 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 await query.edit_message_text("❌ Ошибка активации тестового периода.")
-                
-        elif query.data.startswith("manual_paid_"):
+                        elif query.data.startswith("manual_paid_"):
+    """Обработка кнопки 'Я оплатил' с уведомлением админу"""
+    try:
+        # Получаем период из callback_data: manual_paid_1 → period=1
+        period = query.data.split("_")[2] if len(query.data.split("_")) > 2 else "1"
+        
+        if period in PREMIUM_PRICES:
+            price_info = PREMIUM_PRICES[period]
+            user = query.from_user
+            
+            # 1. Сообщение пользователю
             await query.edit_message_text(
-                "⏳ <b>Заявка принята!</b>\n\n"
-                "Администратор получил уведомление о вашей оплате.\n"
-                "Премиум подписка будет активирована в течение 24 часов.\n\n"
-                "Спасибо за покупку! 💎",
+                f"✅ <b>Заявка принята!</b>\n\n"
+                f"<b>Детали оплаты:</b>\n"
+                f"• Подписка: {price_info['text']}\n"
+                f"• Сумма: {price_info['amount']}₽\n"
+                f"• Срок: {price_info['days']} дней\n\n"
+                f"<b>Что дальше:</b>\n"
+                f"1. Администратор получил уведомление\n"
+                f"2. Он активирует ваш премиум вручную\n"
+                f"3. Вы получите сообщение о активации\n\n"
+                f"Обычно это занимает до 24 часов.\n\n"
+                f"Спасибо за покупку! 💎",
                 parse_mode='HTML'
             )
+            
+            # 2. УВЕДОМЛЕНИЕ АДМИНИСТРАТОРУ
+            try:
+                # Формируем красивое сообщение
+                admin_message = (
+                    f"💰 <b>НОВАЯ ЗАЯВКА НА ОПЛАТУ!</b>\n\n"
+                    f"<b>👤 Пользователь:</b>\n"
+                    f"├ Имя: {user.first_name or 'Не указано'}\n"
+                    f"├ Фамилия: {user.last_name or 'Не указана'}\n"
+                    f"├ Username: @{user.username or 'нет'}\n"
+                    f"└ ID: <code>{user.id}</code>\n\n"
+                    f"<b>📦 Подписка:</b>\n"
+                    f"├ Период: {price_info['text']}\n"
+                    f"├ Сумма: {price_info['amount']}₽\n"
+                    f"└ Дней: {price_info['days']}\n\n"
+                    f"<b>⚡ Быстрая активация:</b>\n"
+                    f"<code>/admin_activate @{user.username or 'ID_' + str(user.id)} {price_info['days']}</code>\n\n"
+                    f"<i>⏰ Заявка создана: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>"
+                )
+                
+                # Отправляем администратору
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,  # Ваш ID 786588687
+                    text=admin_message,
+                    parse_mode='HTML'
+                )
+                
+                # Логируем для отладки
+                logger.info(f"💰 Новая заявка на оплату: user_id={user.id}, username=@{user.username}, period={period}, amount={price_info['amount']}₽")
+                print(f"✅ Уведомление отправлено администратору {ADMIN_ID}")
+                
+            except Exception as admin_error:
+                logger.error(f"❌ Ошибка отправки уведомления админу: {admin_error}")
+                print(f"❌ Не удалось отправить уведомление админу: {admin_error}")
+                
+                # Запасной вариант: отправляем себе в чат с ботом
+                try:
+                    await query.message.reply_text(
+                        f"⚠️ <b>Техническое уведомление</b>\n\n"
+                        f"Не удалось отправить уведомление администратору.\n"
+                        f"Пожалуйста, свяжитесь с ним напрямую:\n\n"
+                        f"Ваши данные для ручной активации:\n"
+                        f"• Ваш ID: <code>{user.id}</code>\n"
+                        f"• Подписка: {price_info['text']}\n"
+                        f"• Сумма: {price_info['amount']}₽",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
+                
+        else:
+            await query.edit_message_text(
+                "❌ <b>Ошибка обработки оплаты</b>\n\n"
+                "Неверный период подписки. Пожалуйста, попробуйте снова.",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка в обработчике manual_paid_: {e}")
+        await query.edit_message_text(
+            "❌ <b>Произошла ошибка</b>\n\n"
+            "Пожалуйста, повторите попытку или свяжитесь с администратором.",
+            parse_mode='HTML'
+        )
         
         # ========== ОБРАБОТЧИКИ РАССЫЛКИ ==========
             
@@ -2197,7 +2300,86 @@ async def test_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Команда только для администратора.")
         return
+    async def test_admin_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тестовая команда /test_admin - проверка уведомлений админу"""
+    user = update.effective_user
     
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Команда только для администратора.")
+        return
+    
+    try:
+        test_message = (
+            f"🔔 <b>ТЕСТ УВЕДОМЛЕНИЙ АДМИНИСТРАТОРУ</b>\n\n"
+            f"✅ Система уведомлений работает!\n\n"
+            f"<b>Ваш ID администратора:</b> <code>{ADMIN_ID}</code>\n"
+            f"<b>Время:</b> {datetime.now().strftime('%H:%M:%S')}\n\n"
+            f"<i>Теперь протестируйте оплату от лица пользователя</i>"
+        )
+        
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=test_message,
+            parse_mode='HTML'
+        )
+        
+        await update.message.reply_text(
+            "✅ <b>Тестовое уведомление отправлено!</b>\n\n"
+            "Проверьте сообщения от бота.\n"
+            "Если получили - система работает!\n\n"
+            "<b>Теперь протестируйте оплату:</b>\n"
+            "1. Откройте бота как пользователь\n"
+            "2. 💎 Премиум → 1 месяц → ✅ Я оплатил\n"
+            "3. Вернитесь сюда и проверьте уведомление",
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка test_admin_notify: {e}")
+        await update.message.reply_text(f"❌ Ошибка теста: {str(e)[:100]}")
+        async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /admin_requests - управление заявками на оплату"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text(
+            f"❌ <b>ДОСТУП ЗАПРЕЩЕН</b>\n\n"
+            f"Ваш ID: <code>{user.id}</code>\n"
+            f"Требуется ID: <code>{ADMIN_ID}</code>",
+            parse_mode='HTML'
+        )
+        return
+    
+    help_text = (
+        "💰 <b>УПРАВЛЕНИЕ ЗАЯВКАМИ НА ОПЛАТУ</b>\n\n"
+        
+        "<b>Когда пользователь нажимает '✅ Я оплатил':</b>\n"
+        "1. 📨 <b>Вам приходит уведомление</b> в этот чат\n"
+        "2. 👤 Пользователь получает подтверждение\n"
+        "3. ⚡ Вы активируете премиум командой:\n\n"
+        
+        "<code>/admin_activate @username ДНИ</code>\n\n"
+        
+        "<b>Примеры:</b>\n"
+        "<code>/admin_activate @ivanov 30</code> - на 30 дней\n"
+        "<code>/admin_activate 123456789 90</code> - по ID\n\n"
+        
+        "<b>Для тестирования:</b>\n"
+        "• /test_admin - тест уведомлений\n"
+        "• /admin_users - список пользователей"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
+         InlineKeyboardButton("💎 Активировать", callback_data="admin_activate")],
+        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
+         InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")],
+        [InlineKeyboardButton("🧪 Тест уведомлений", callback_data="test_admin_notify")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
     # Имитируем отправку уведомления
     try:
         await context.bot.send_message(
@@ -2211,7 +2393,71 @@ async def test_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.error(f"❌ Ошибка тестового уведомления: {e}")
         await update.message.reply_text(f"❌ Ошибка отправки: {str(e)[:100]}")
+# ========== КОМАНДА ДЛЯ ПРОСМОТРА ЗАЯВОК ==========
 
+async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /admin_requests - просмотр заявок на оплату"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text(
+            f"❌ <b>ДОСТУП ЗАПРЕЩЕН</b>\n\n"
+            f"Ваш ID: <code>{user.id}</code>\n"
+            f"Требуется ID: <code>{ADMIN_ID}</code>\n\n"
+            f"<i>Эта команда только для администратора</i>",
+            parse_mode='HTML'
+        )
+        return
+    
+    try:
+        # Информационное сообщение
+        help_text = (
+            "💰 <b>УПРАВЛЕНИЕ ЗАЯВКАМИ НА ОПЛАТУ</b>\n\n"
+            
+            "<b>Когда пользователь нажимает '✅ Я оплатил':</b>\n"
+            "1. 📨 <b>Вам приходит уведомление</b> в этот чат\n"
+            "2. 👤 Пользователь получает подтверждение\n"
+            "3. ⏳ Вы активируете премиум вручную\n\n"
+            
+            "<b>Команды для активации:</b>\n"
+            "• <code>/admin_activate @username 30</code> - на 30 дней\n"
+            "• <code>/admin_activate @username 90</code> - на 90 дней\n"
+            "• <code>/admin_activate @username 365</code> - на год\n\n"
+            
+            "<b>Пример:</b>\n"
+            "<code>/admin_activate @ivanov_91 30</code>\n\n"
+            
+            "<b>Для поиска пользователей:</b>\n"
+            "• Используйте /admin_users\n"
+            "• Или кнопку '👥 Пользователи' в админ панели\n\n"
+            
+            "<b>Проверьте:</b>\n"
+            "1. Уведомления в этом чате\n"
+            "2. Логи в панели Render\n"
+            "3. Сообщения от пользователей"
+        )
+        
+        # Клавиатура
+        keyboard = [
+            [
+                InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
+                InlineKeyboardButton("💎 Активировать", callback_data="admin_activate")
+            ],
+            [
+                InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
+                InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")
+            ],
+            [
+                InlineKeyboardButton("🔄 Проверить уведомления", callback_data="check_notifications")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Ошибка в admin_requests_command: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
 # ========== ОБРАБОТЧИК ОШИБОК ==========
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2291,6 +2537,8 @@ def main():
     app.add_handler(CommandHandler("broadcast_test", admin_broadcast_test_command))
     app.add_handler(CommandHandler("test", test_command))
     app.add_handler(CommandHandler("test_notify", test_notify_command))
+    app.add_handler(CommandHandler("test_admin", test_admin_notify_command))
+    app.add_handler(CommandHandler("admin_requests", admin_requests_command))
     app.add_handler(conv_handler)
     app.add_handler(broadcast_conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
@@ -2343,3 +2591,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
