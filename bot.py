@@ -45,6 +45,7 @@ try:
         print("=" * 50)
         exit(1)
     print(f"✅ ADMIN_ID: {ADMIN_ID}")
+    print(f"✅ Тип ADMIN_ID: {type(ADMIN_ID)}")
 except Exception as e:
     logger.error(f"❌ Ошибка загрузки ADMIN_ID: {e}")
     print("=" * 50)
@@ -668,7 +669,7 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             message += f"   💰 {amount}₽\n"
             message += f"   📅 {formatted_date} {recurrence_icon}\n\n"
         
-        message += f"<b>📊 Итого:</b> {len(reminders)} напоминаний на сумму {total_amount:.2f}₽\n"
+        message += f"<b>📊 Итого:</b> {len(reminders)} напоминаний на сумма {total_amount:.2f}₽\n"
         
         # Получаем статус премиума
         premium_status = db.get_user_premium_status(user_id)
@@ -1885,30 +1886,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Сначала найдите username пользователя через кнопку '👥 Пользователи'",
                 parse_mode='HTML'
             )
-            elif query.data == "test_admin_notify":
-    """Тест уведомлений админу через кнопку"""
-    if query.from_user.id != ADMIN_ID:
-        await query.edit_message_text("❌ Доступ запрещен.")
-        return
-    
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text="🔔 <b>ТЕСТ ЧЕРЕЗ КНОПКУ</b>\n\n"
-                 "✅ Кнопочные уведомления работают!\n\n"
-                 "Теперь попробуйте реальную оплату.",
-            parse_mode='HTML'
-        )
-        
-        await query.edit_message_text(
-            "✅ <b>Тест завершен!</b>\n\n"
-            "Проверьте уведомление от бота.",
-            parse_mode='HTML'
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка test_admin_notify button: {e}")
-        await query.edit_message_text(f"❌ Ошибка: {str(e)[:100]}")
+            
+        elif query.data == "test_admin_notify":
+            """Тест уведомлений админу через кнопку"""
+            if query.from_user.id != ADMIN_ID:
+                await query.edit_message_text("❌ Доступ запрещен.")
+                return
+            
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text="🔔 <b>ТЕСТ ЧЕРЕЗ КНОПКУ</b>\n\n"
+                         "✅ Кнопочные уведомления работают!\n\n"
+                         "Теперь попробуйте реальную оплату.",
+                    parse_mode='HTML'
+                )
+                
+                await query.edit_message_text(
+                    "✅ <b>Тест завершен!</b>\n\n"
+                    "Проверьте уведомление от бота.",
+                    parse_mode='HTML'
+                )
+                
+            except Exception as e:
+                logger.error(f"Ошибка test_admin_notify button: {e}")
+                await query.edit_message_text(f"❌ Ошибка: {str(e)[:100]}")
+                
         elif query.data == "trial":
             user = query.from_user
             user_id = db.get_or_create_user(user.id, user.username, user.first_name, user.last_name)
@@ -1925,98 +1928,141 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 await query.edit_message_text("❌ Ошибка активации тестового периода.")
-                        elif query.data.startswith("manual_paid_"):
-    """Обработка кнопки 'Я оплатил' с уведомлением админу"""
-    try:
-        # Получаем период из callback_data: manual_paid_1 → period=1
-        period = query.data.split("_")[2] if len(query.data.split("_")) > 2 else "1"
-        
-        if period in PREMIUM_PRICES:
-            price_info = PREMIUM_PRICES[period]
-            user = query.from_user
-            
-            # 1. Сообщение пользователю
-            await query.edit_message_text(
-                f"✅ <b>Заявка принята!</b>\n\n"
-                f"<b>Детали оплаты:</b>\n"
-                f"• Подписка: {price_info['text']}\n"
-                f"• Сумма: {price_info['amount']}₽\n"
-                f"• Срок: {price_info['days']} дней\n\n"
-                f"<b>Что дальше:</b>\n"
-                f"1. Администратор получил уведомление\n"
-                f"2. Он активирует ваш премиум вручную\n"
-                f"3. Вы получите сообщение о активации\n\n"
-                f"Обычно это занимает до 24 часов.\n\n"
-                f"Спасибо за покупку! 💎",
-                parse_mode='HTML'
-            )
-            
-            # 2. УВЕДОМЛЕНИЕ АДМИНИСТРАТОРУ
+                
+        # ========== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК КНОПКИ "Я ОПЛАТИЛ" ==========
+        elif query.data.startswith("manual_paid_"):
+            """Обработчик кнопки 'Я оплатил' с уведомлением админу"""
             try:
-                # Формируем красивое сообщение
-                admin_message = (
-                    f"💰 <b>НОВАЯ ЗАЯВКА НА ОПЛАТУ!</b>\n\n"
-                    f"<b>👤 Пользователь:</b>\n"
-                    f"├ Имя: {user.first_name or 'Не указано'}\n"
-                    f"├ Фамилия: {user.last_name or 'Не указана'}\n"
-                    f"├ Username: @{user.username or 'нет'}\n"
-                    f"└ ID: <code>{user.id}</code>\n\n"
-                    f"<b>📦 Подписка:</b>\n"
-                    f"├ Период: {price_info['text']}\n"
-                    f"├ Сумма: {price_info['amount']}₽\n"
-                    f"└ Дней: {price_info['days']}\n\n"
-                    f"<b>⚡ Быстрая активация:</b>\n"
-                    f"<code>/admin_activate @{user.username or 'ID_' + str(user.id)} {price_info['days']}</code>\n\n"
-                    f"<i>⏰ Заявка создана: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>"
-                )
+                # Получаем период из callback_data: manual_paid_1 → period=1
+                period = query.data.split("_")[2] if len(query.data.split("_")) > 2 else "1"
                 
-                # Отправляем администратору
-                await context.bot.send_message(
-                    chat_id=ADMIN_ID,  # Ваш ID 786588687
-                    text=admin_message,
-                    parse_mode='HTML'
-                )
-                
-                # Логируем для отладки
-                logger.info(f"💰 Новая заявка на оплату: user_id={user.id}, username=@{user.username}, period={period}, amount={price_info['amount']}₽")
-                print(f"✅ Уведомление отправлено администратору {ADMIN_ID}")
-                
-            except Exception as admin_error:
-                logger.error(f"❌ Ошибка отправки уведомления админу: {admin_error}")
-                print(f"❌ Не удалось отправить уведомление админу: {admin_error}")
-                
-                # Запасной вариант: отправляем себе в чат с ботом
-                try:
-                    await query.message.reply_text(
-                        f"⚠️ <b>Техническое уведомление</b>\n\n"
-                        f"Не удалось отправить уведомление администратору.\n"
-                        f"Пожалуйста, свяжитесь с ним напрямую:\n\n"
-                        f"Ваши данные для ручной активации:\n"
-                        f"• Ваш ID: <code>{user.id}</code>\n"
+                if period in PREMIUM_PRICES:
+                    price_info = PREMIUM_PRICES[period]
+                    user = query.from_user
+                    
+                    # 1. Логируем нажатие
+                    logger.info(f"💰 Кнопка 'Я оплатил' нажата: user_id={user.id}, username=@{user.username}, period={period}")
+                    print(f"DEBUG: Кнопка 'Я оплатил' нажата пользователем {user.id}")
+                    
+                    # 2. Сообщение пользователю
+                    await query.edit_message_text(
+                        f"✅ <b>Заявка принята!</b>\n\n"
+                        f"<b>Детали оплаты:</b>\n"
                         f"• Подписка: {price_info['text']}\n"
-                        f"• Сумма: {price_info['amount']}₽",
+                        f"• Сумма: {price_info['amount']}₽\n"
+                        f"• Срок: {price_info['days']} дней\n\n"
+                        f"<b>Что дальше:</b>\n"
+                        f"1. Администратор получил уведомление\n"
+                        f"2. Он активирует ваш премиум вручную\n"
+                        f"3. Вы получите сообщение о активации\n\n"
+                        f"Обычно это занимает до 24 часов.\n\n"
+                        f"Спасибо за покупку! 💎",
+                        parse_mode='HTML'
+                    )
+                    
+                    # 3. ВАЖНОЕ ИСПРАВЛЕНИЕ: Проверяем ADMIN_ID
+                    print(f"DEBUG: ADMIN_ID = {ADMIN_ID}, type = {type(ADMIN_ID)}")
+                    print(f"DEBUG: Текущий пользователь ID = {user.id}")
+                    
+                    # Проверяем, что ADMIN_ID валидный
+                    if not ADMIN_ID or ADMIN_ID == 0:
+                        logger.error("❌ ADMIN_ID не настроен!")
+                        await query.message.reply_text(
+                            "⚠️ <b>Техническая ошибка</b>\n\n"
+                            "ADMIN_ID не настроен. Сообщите об этом администратору."
+                        )
+                        return
+                    
+                    # 4. Формируем уведомление для администратора
+                    try:
+                        username_display = f"@{user.username}" if user.username else f"ID_{user.id}"
+                        first_name_display = user.first_name or "Не указано"
+                        last_name_display = user.last_name or "Не указана"
+                        
+                        admin_message = (
+                            f"💰 <b>НОВАЯ ЗАЯВКА НА ОПЛАТУ!</b>\n\n"
+                            f"<b>👤 Пользователь:</b>\n"
+                            f"├ Имя: {first_name_display}\n"
+                            f"├ Фамилия: {last_name_display}\n"
+                            f"├ Username: {username_display}\n"
+                            f"└ ID: <code>{user.id}</code>\n\n"
+                            f"<b>📦 Подписка:</b>\n"
+                            f"├ Период: {price_info['text']}\n"
+                            f"├ Сумма: {price_info['amount']}₽\n"
+                            f"└ Дней: {price_info['days']}\n\n"
+                            f"<b>⚡ Быстрая активация:</b>\n"
+                            f"<code>/admin_activate {username_display.replace('@', '')} {price_info['days']}</code>\n"
+                            f"или\n"
+                            f"<code>/admin_activate {user.id} {price_info['days']}</code>\n\n"
+                            f"<b>⏰ Время заявки:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
+                            f"<i>Для просмотра всех заявок: /admin_requests</i>"
+                        )
+                        
+                        # 5. Отправляем уведомление администратору
+                        print(f"DEBUG: Пробуем отправить сообщение администратору {ADMIN_ID}")
+                        
+                        sent_message = await context.bot.send_message(
+                            chat_id=ADMIN_ID,
+                            text=admin_message,
+                            parse_mode='HTML'
+                        )
+                        
+                        # 6. Логируем успешную отправку
+                        logger.info(f"✅ Уведомление отправлено администратору {ADMIN_ID}. Message ID: {sent_message.message_id}")
+                        print(f"✅ УВЕДОМЛЕНИЕ ОТПРАВЛЕНО АДМИНИСТРАТОРУ!")
+                        print(f"DEBUG: Текст уведомления:\n{admin_message}")
+                        
+                    except Exception as admin_error:
+                        # 7. ДЕТАЛЬНАЯ ОБРАБОТКА ОШИБОК
+                        error_msg = str(admin_error)
+                        logger.error(f"❌ Ошибка отправки уведомления админу: {error_msg}")
+                        print(f"❌ ОШИБКА ОТПРАВКИ АДМИНУ: {error_msg}")
+                        
+                        # Определяем тип ошибки
+                        if "chat not found" in error_msg.lower():
+                            error_info = "Чат с администратором не найден. Проверьте ADMIN_ID."
+                        elif "bot was blocked" in error_msg.lower():
+                            error_info = "Бот заблокирован администратором."
+                        elif "Forbidden" in error_msg:
+                            error_info = "У бота нет доступа к чату администратора."
+                        else:
+                            error_info = f"Техническая ошибка: {error_msg[:100]}"
+                        
+                        # Сообщаем пользователю
+                        await query.message.reply_text(
+                            f"⚠️ <b>Внимание!</b>\n\n"
+                            f"Не удалось автоматически уведомить администратора.\n\n"
+                            f"<b>Ваши данные для ручной активации:</b>\n"
+                            f"• Ваш ID: <code>{user.id}</code>\n"
+                            f"• Подписка: {price_info['text']}\n"
+                            f"• Сумма: {price_info['amount']}₽\n\n"
+                            f"<b>Сообщите администратору:</b>\n"
+                            f"Используйте команду:\n"
+                            f"<code>/admin_activate {user.id} {price_info['days']}</code>\n\n"
+                            f"{error_info}",
+                            parse_mode='HTML'
+                        )
+                        
+                else:
+                    await query.edit_message_text(
+                        "❌ <b>Ошибка обработки оплаты</b>\n\n"
+                        "Неверный период подписки. Пожалуйста, попробуйте снова.",
+                        parse_mode='HTML'
+                    )
+                    
+            except Exception as e:
+                logger.error(f"❌ Общая ошибка в обработчике manual_paid_: {e}", exc_info=True)
+                print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+                
+                try:
+                    await query.edit_message_text(
+                        "❌ <b>Произошла критическая ошибка</b>\n\n"
+                        "Пожалуйста, повторите попытку или свяжитесь с администратором напрямую.",
                         parse_mode='HTML'
                     )
                 except:
                     pass
                 
-        else:
-            await query.edit_message_text(
-                "❌ <b>Ошибка обработки оплаты</b>\n\n"
-                "Неверный период подписки. Пожалуйста, попробуйте снова.",
-                parse_mode='HTML'
-            )
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка в обработчике manual_paid_: {e}")
-        await query.edit_message_text(
-            "❌ <b>Произошла ошибка</b>\n\n"
-            "Пожалуйста, повторите попытку или свяжитесь с администратором.",
-            parse_mode='HTML'
-        )
-        
-        # ========== ОБРАБОТЧИКИ РАССЫЛКИ ==========
-            
         elif query.data == "broadcast_text":
             await query.edit_message_text(
                 "📝 <b>ТЕКСТОВАЯ РАССЫЛКА</b>\n\n"
@@ -2300,7 +2346,22 @@ async def test_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Команда только для администратора.")
         return
-    async def test_admin_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    
+    # Имитируем отправку уведомления
+    try:
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="🔔 <b>ТЕСТОВОЕ УВЕДОМЛЕНИЕ</b>\n\n"
+                 "Это тестовое сообщение от системы уведомлений.\n"
+                 "Если вы его получили, значит бот работает правильно! ✅",
+            parse_mode='HTML'
+        )
+        await update.message.reply_text("✅ Тестовое уведомление отправлено!")
+    except Exception as e:
+        logger.error(f"❌ Ошибка тестового уведомления: {e}")
+        await update.message.reply_text(f"❌ Ошибка отправки: {str(e)[:100]}")
+
+async def test_admin_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тестовая команда /test_admin - проверка уведомлений админу"""
     user = update.effective_user
     
@@ -2335,9 +2396,10 @@ async def test_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         
     except Exception as e:
-        logger.error(f"Ошибка test_admin_notify: {e}")
+        logger.error(f"❌ Ошибка test_admin_notify: {e}")
         await update.message.reply_text(f"❌ Ошибка теста: {str(e)[:100]}")
-        async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /admin_requests - управление заявками на оплату"""
     user = update.effective_user
     
@@ -2380,19 +2442,7 @@ async def test_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
-    # Имитируем отправку уведомления
-    try:
-        await context.bot.send_message(
-            chat_id=update.effective_user.id,
-            text="🔔 <b>ТЕСТОВОЕ УВЕДОМЛЕНИЕ</b>\n\n"
-                 "Это тестовое сообщение от системы уведомлений.\n"
-                 "Если вы его получили, значит бот работает правильно! ✅",
-            parse_mode='HTML'
-        )
-        await update.message.reply_text("✅ Тестовое уведомление отправлено!")
-    except Exception as e:
-        logger.error(f"❌ Ошибка тестового уведомления: {e}")
-        await update.message.reply_text(f"❌ Ошибка отправки: {str(e)[:100]}")
+
 # ========== КОМАНДА ДЛЯ ПРОСМОТРА ЗАЯВОК ==========
 
 async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2458,6 +2508,65 @@ async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         logger.error(f"Ошибка в admin_requests_command: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
+
+# ========== НОВАЯ ТЕСТОВАЯ КОМАНДА ДЛЯ ПРОВЕРКИ УВЕДОМЛЕНИЙ ==========
+
+async def test_payment_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тестовая команда для проверки уведомлений о платежах"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Команда только для администратора.")
+        return
+    
+    try:
+        # Тестовое уведомление
+        test_message = (
+            f"🧪 <b>ТЕСТ УВЕДОМЛЕНИЙ О ПЛАТЕЖАХ</b>\n\n"
+            f"✅ Система уведомлений работает!\n\n"
+            f"<b>Техническая информация:</b>\n"
+            f"• ADMIN_ID: <code>{ADMIN_ID}</code>\n"
+            f"• Ваш ID: <code>{user.id}</code>\n"
+            f"• Совпадение: {'✅ Да' if user.id == ADMIN_ID else '❌ Нет'}\n"
+            f"• Время: {datetime.now().strftime('%H:%M:%S')}\n\n"
+            f"<b>Если вы видите это сообщение:</b>\n"
+            f"1. Бот может отправлять вам сообщения ✅\n"
+            f"2. Теперь протестируйте кнопку '✅ Я оплатил'\n"
+            f"3. Откройте бота как пользователь\n"
+            f"4. 💎 Премиум → 1 месяц → ✅ Я оплатил"
+        )
+        
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=test_message,
+            parse_mode='HTML'
+        )
+        
+        await update.message.reply_text(
+            "✅ <b>Тестовое уведомление отправлено!</b>\n\n"
+            "Проверьте сообщения от бота.\n\n"
+            "<b>Если получили - переходите к тесту оплаты:</b>\n"
+            "1. Откройте @BotFather\n"
+            "2. Начните диалог с вашим ботом\n"
+            "3. 💎 Премиум → 1 месяц → ✅ Я оплатил\n"
+            "4. Вернитесь сюда и проверьте уведомление",
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка test_payment_notify: {e}")
+        await update.message.reply_text(
+            f"❌ <b>ОШИБКА ТЕСТА!</b>\n\n"
+            f"Не удалось отправить тестовое сообщение.\n\n"
+            f"<b>Причина:</b>\n"
+            f"{str(e)[:200]}\n\n"
+            f"<b>Проверьте:</b>\n"
+            f"1. Правильный ли ADMIN_ID?\n"
+            f"2. Не заблокировали ли вы бота?\n"
+            f"3. Работает ли бот вообще?",
+            parse_mode='HTML'
+        )
+
 # ========== ОБРАБОТЧИК ОШИБОК ==========
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2538,6 +2647,7 @@ def main():
     app.add_handler(CommandHandler("test", test_command))
     app.add_handler(CommandHandler("test_notify", test_notify_command))
     app.add_handler(CommandHandler("test_admin", test_admin_notify_command))
+    app.add_handler(CommandHandler("test_payment", test_payment_notify))
     app.add_handler(CommandHandler("admin_requests", admin_requests_command))
     app.add_handler(conv_handler)
     app.add_handler(broadcast_conv_handler)
@@ -2565,7 +2675,7 @@ def main():
     print("  • /start, /new, /list, /premium, /buy, /status, /help")
     print("  • /admin, /admin_activate, /admin_deactivate")
     print("  • /broadcast, /broadcast_premium, /broadcast_photo, /broadcast_test")
-    print("  • /test, /test_notify")
+    print("  • /test, /test_notify, /test_admin, /test_payment")
     print("=" * 60)
     
     # Запускаем веб-сервер в отдельном потоке
@@ -2591,4 +2701,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
