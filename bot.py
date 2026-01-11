@@ -1,3 +1,45 @@
+import os
+import sys
+
+# Проверка на дублирующий запуск
+LOCK_FILE = "/tmp/telegram_bot.lock"
+
+def check_single_instance():
+    """Проверяет, что запущен только один экземпляр"""
+    import fcntl
+    
+    try:
+        # Пытаемся создать lock-файл
+        lock_fd = os.open(LOCK_FILE, os.O_WRONLY | os.O_CREAT)
+        
+        # Пытаемся заблокировать файл
+        try:
+            fcntl.lockf(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            print(f"✅ Lock получен. PID: {os.getpid()}")
+            
+            # Функция для очистки при выходе
+            def cleanup():
+                fcntl.lockf(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+                os.unlink(LOCK_FILE)
+                print("🔓 Lock освобожден")
+            
+            import atexit
+            atexit.register(cleanup)
+            return True
+            
+        except IOError:
+            print(f"❌ Бот уже запущен! Завершаем процесс {os.getpid()}")
+            os.close(lock_fd)
+            return False
+            
+    except Exception as e:
+        print(f"⚠️ Не удалось проверить lock: {e}")
+        return True  # Продолжаем, если не удалось
+
+# Проверяем перед запуском
+if not check_single_instance():
+    sys.exit(1)
 def main():
     """Запуск бота"""
     # ОЧИСТКА: Удаляем все ожидающие обновления перед запуском
@@ -749,4 +791,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
