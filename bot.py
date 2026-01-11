@@ -1,4 +1,4 @@
-# bot.py - полный исправленный код
+# bot.py - полный исправленный код с keep-alive
 import os
 import logging
 from datetime import datetime, timedelta, time
@@ -12,6 +12,8 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
+import threading
+import time as time_module
 
 # Импортируем наши модули
 from database import db
@@ -63,6 +65,149 @@ PREMIUM_PRICES = {
 TITLE, AMOUNT, DATE = range(3)
 # Состояния для рассылки с фото
 AWAITING_PHOTO, AWAITING_TEXT = range(2)
+
+# ========== ВЕБ-СЕРВЕР ДЛЯ KEEP-ALIVE ==========
+
+def run_web_server():
+    """Запуск веб-сервера для keep-alive"""
+    try:
+        from flask import Flask, jsonify
+        import os
+        
+        web_app = Flask(__name__)
+        
+        @web_app.route('/')
+        def home():
+            return jsonify({
+                "status": "active",
+                "service": "telegram-reminder-bot",
+                "bot": "running",
+                "timestamp": datetime.now().isoformat()
+            })
+        
+        @web_app.route('/ping')
+        def ping():
+            """Эндпоинт для мониторинга"""
+            return "pong", 200
+        
+        @web_app.route('/health')
+        def health():
+            """Полная проверка здоровья"""
+            try:
+                # Проверяем подключение к БД
+                conn = db.get_connection()
+                db_status = "connected" if conn else "disconnected"
+                
+                return jsonify({
+                    "status": "healthy",
+                    "database": db_status,
+                    "bot": "running",
+                    "timestamp": datetime.now().isoformat(),
+                    "version": "1.0.0"
+                }), 200
+            except Exception as e:
+                return jsonify({
+                    "status": "unhealthy",
+                    "error": str(e)[:100],
+                    "timestamp": datetime.now().isoformat()
+                }), 500
+        
+        @web_app.route('/status')
+        def status():
+            """Статус бота с подробностями"""
+            try:
+                # Базовая статистика
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM users")
+                    total_users = cursor.fetchone()[0]
+                    
+                    cursor.execute("SELECT COUNT(*) FROM reminders WHERE is_active = TRUE")
+                    total_reminders = cursor.fetchone()[0]
+                    cursor.close()
+            except:
+                total_users = total_reminders = 0
+            
+            return jsonify({
+                "bot": "НеЗабудьОплатить",
+                "status": "running",
+                "users": total_users,
+                "active_reminders": total_reminders,
+                "uptime": "always",
+                "server_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "admin_id": ADMIN_ID
+            })
+        
+        # Запускаем веб-сервер
+        port = int(os.getenv('PORT', 8080))
+        print(f"🌐 Веб-сервер запускается на порту {port}")
+        web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        
+    except ImportError:
+        # Если Flask не установлен, используем простой HTTP сервер
+        print("⚠️ Flask не установлен, использую простой HTTP сервер")
+        run_simple_http_server()
+
+def run_simple_http_server():
+    """Простой HTTP сервер без зависимостей"""
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import json
+    
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/ping':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'pong')
+            elif self.path == '/health' or self.path == '/':
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                response = json.dumps({
+                    "status": "healthy",
+                    "service": "telegram-bot",
+                    "timestamp": datetime.now().isoformat()
+                })
+                self.wfile.write(response.encode())
+            else:
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Bot is running')
+        
+        def log_message(self, format, *args):
+            pass  # Отключаем логирование
+    
+    port = int(os.getenv('PORT', 8080))
+    server = HTTPServer(('0.0.0.0', port), Handler)
+    print(f"🌐 HTTP сервер запущен на порту {port}")
+    server.serve_forever()
+
+def start_keep_alive():
+    """Фоновая задача для периодического self-ping"""
+    import requests
+    
+    print("🔧 Keep-alive механизм запущен")
+    
+    while True:
+        try:
+            # Пингуем сами себя
+            port = int(os.getenv('PORT', 8080))
+            response = requests.get(f'http://localhost:{port}/ping', timeout=5)
+            
+            current_time = time_module.strftime('%H:%M:%S')
+            if response.status_code == 200:
+                print(f"✅ [{current_time}] Self-ping успешен")
+            else:
+                print(f"⚠️ [{current_time}] Self-ping: код {response.status_code}")
+                
+        except Exception as e:
+            current_time = time_module.strftime('%H:%M:%S')
+            print(f"❌ [{current_time}] Self-ping ошибка: {str(e)[:50]}")
+        
+        # Ждем 8 минут (меньше чем 15-минутный лимит Render)
+        time_module.sleep(480)  # 8 минут = 480 секунд
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ==========
 
@@ -364,7 +509,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_amount = 0
         
         for i, rem in enumerate(reminders[:10], 1):
-            # Форматируем дату
+            # Форматируем дату (ИСПРАВЛЕННЫЙ КОД)
             payment_date = rem.get('payment_date', '')
             if isinstance(payment_date, str):
                 try:
@@ -495,7 +640,7 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         total_amount = 0
         
         for i, rem in enumerate(reminders[:10], 1):
-            # Форматируем дату
+            # Форматируем дату (ИСПРАВЛЕННЫЙ КОД)
             payment_date = rem.get('payment_date', '')
             if isinstance(payment_date, str):
                 try:
@@ -2004,7 +2149,7 @@ async def admin_users_handler(query, context):
             await query.edit_message_text("📭 Пользователей пока нет.")
             return
         
-        message = "👥 <b>ПОСЛЕДНИЕ ПОЛЬЗОВАТЕЛИ:</b>\n\n"
+        message = "👥 <b>ПОСЛЕДНИЕ ПОЛЬЗОВАТЕЛЫ:</b>\n\n"
         
         for i, (username, first_name, is_premium, created_at) in enumerate(users, 1):
             username_display = f"@{username}" if username else "нет username"
@@ -2084,13 +2229,14 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== ЗАПУСК БОТА ==========
 
 def main():
-    """Запуск бота"""
-    print("=" * 50)
+    """Запуск бота с веб-сервером"""
+    print("=" * 60)
     print("🚀 ЗАПУСК ТЕЛЕГРАМ БОТА «НеЗабудьОплатить»")
-    print("=" * 50)
+    print("=" * 60)
     
     print(f"✅ Токен: {'найден' if TOKEN else 'НЕ НАЙДЕН'}")
     print(f"✅ ADMIN_ID: {ADMIN_ID}")
+    print(f"🌐 Веб-порт: {os.getenv('PORT', 8080)}")
     
     # Проверка БД
     try:
@@ -2104,8 +2250,10 @@ def main():
     # Проверка ЮKassa
     print(f"💳 ЮKassa: {'настроена' if yookassa.is_configured() else 'НЕ настроена'}")
     
-    # Создаем приложение
+    # Создаем приложение бота
     app = Application.builder().token(TOKEN).build()
+    
+    # ===== РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ =====
     
     # ConversationHandler для создания напоминаний
     conv_handler = ConversationHandler(
@@ -2164,17 +2312,34 @@ def main():
     # Обработчик ошибок
     app.add_error_handler(error_handler)
     
-    print("✅ Команды зарегистрированы")
+    print("\n✅ Команды зарегистрированы")
     print("📝 Доступные команды:")
     print("  • /start, /new, /list, /premium, /buy, /status, /help")
     print("  • /admin, /admin_activate, /admin_deactivate")
     print("  • /broadcast, /broadcast_premium, /broadcast_photo, /broadcast_test")
     print("  • /test, /test_notify")
-    print("=" * 50)
-    print("🤖 Бот запускается...")
+    print("=" * 60)
     
-    # Запускаем бота
-    app.run_polling()
+    # Запускаем веб-сервер в отдельном потоке
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    
+    # Даем веб-серверу время запуститься
+    time_module.sleep(3)
+    print("✅ Веб-сервер запущен")
+    
+    # Запускаем keep-alive в отдельном потоке
+    keep_alive_thread = threading.Thread(target=start_keep_alive, daemon=True)
+    keep_alive_thread.start()
+    print("✅ Keep-alive механизм запущен")
+    
+    print("🤖 Telegram бот запускается...")
+    print("=" * 60)
+    
+    # Запускаем бота (блокирующий вызов)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+# ========== ТОЧКА ВХОДА ==========
 
 if __name__ == "__main__":
     main()
