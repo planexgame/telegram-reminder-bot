@@ -36,11 +36,11 @@ try:
     ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
     if ADMIN_ID == 786588687:
         print("⚠️ ВНИМАНИЕ: ADMIN_ID не настроен! Используйте 123456789")
-        ADMIN_ID = 123456789
+        ADMIN_ID = 786588687
     print(f"✅ ADMIN_ID: {ADMIN_ID}")
 except Exception as e:
     print(f"❌ Ошибка загрузки ADMIN_ID: {e}")
-    ADMIN_ID = 123456789
+    ADMIN_ID = 786588687
 
 # Константы
 FREE_LIMIT = 5
@@ -1147,3 +1147,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
