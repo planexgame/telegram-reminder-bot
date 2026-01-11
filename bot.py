@@ -2177,4 +2177,58 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
+   # ========== ДОБАВЬТЕ ЭТО ПЕРЕД ПОСЛЕДНИМИ СТРОКАМИ ==========
+
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import socket
+
+class HealthHandler(BaseHTTPRequestHandler):
+    """Обработчик health check запросов для Render"""
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        # Отключаем логирование чтобы не засорять логи
+        pass
+
+def start_health_server():
+    """Запуск HTTP сервера для health check"""
+    try:
+        # Получаем порт из переменных окружения Render
+        port = int(os.getenv('PORT', 8080))
+        
+        # Проверяем, свободен ли порт
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(('127.0.0.1', port))
+        sock.close()
+        
+        if result == 0:
+            print(f"⚠️ Порт {port} уже занят, пропускаем health server")
+            return
+        
+        server = HTTPServer(('0.0.0.0', port), HealthHandler)
+        print(f"🌐 Health check сервер запущен на порту {port}")
+        server.serve_forever()
+    except Exception as e:
+        print(f"⚠️ Не удалось запустить health server: {e}")
+
+# Запускаем health server в отдельном потоке перед запуском бота
+health_thread = threading.Thread(target=start_health_server, daemon=True)
+health_thread.start()
+if __name__ == "__main__":
+    # Даем время health серверу запуститься
+    import time
+    time.sleep(2)
+    
+    # Запускаем основного бота
     main()
+
