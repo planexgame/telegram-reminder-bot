@@ -30,7 +30,7 @@ TOKEN = os.getenv('TELEGRAM_TOKEN')
 
 # Константы
 FREE_LIMIT = 5  # Бесплатных напоминаний
-ADMIN_ID = 123456789  # Замените на ваш Telegram ID
+ADMIN_ID = 786588687  # Замените на ваш Telegram ID
 
 # Состояния для ConversationHandler (создание напоминания)
 TITLE, AMOUNT, DATE = range(3)
@@ -389,6 +389,50 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
+# ========== КОМАНДА /STATUS ==========
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /status - проверка статуса бота"""
+    try:
+        # Получаем напоминания на завтра
+        tomorrow_reminders = db.get_reminders_for_notification(days_before=1)
+        
+        # Получаем статистику
+        with db.get_connection() as conn:
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM users")
+                users_count = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM reminders WHERE is_active = TRUE")
+                active_reminders = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM payments WHERE status = 'succeeded'")
+                successful_payments = cursor.fetchone()[0]
+            else:
+                users_count = 0
+                active_reminders = 0
+                successful_payments = 0
+        
+        status_text = (
+            f"<b>📊 Статус бота «НеЗабудьОплатить»</b>\n\n"
+            f"<b>👥 Пользователи:</b> {users_count}\n"
+            f"<b>📝 Активных напоминаний:</b> {active_reminders}\n"
+            f"<b>🔔 Уведомлений на завтра:</b> {len(tomorrow_reminders)}\n"
+            f"<b>💎 Успешных платежей:</b> {successful_payments}\n"
+            f"<b>⏰ Время уведомлений:</b> 10:00 по Москве\n"
+            f"<b>📅 Лимит бесплатных:</b> {FREE_LIMIT}\n"
+            f"<b>💳 ЮKassa:</b> {'✅ настроена' if yookassa.is_configured() else '❌ не настроена'}\n"
+            f"<b>🕒 Серверное время:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
+            f"<i>Бот работает стабильно! ✅</i>"
+        )
+        
+        await update.message.reply_text(status_text, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Ошибка команды status: {e}")
+        await update.message.reply_text("❌ Ошибка получения статуса.")
+
 # ========== ПРЕМИУМ КОМАНДЫ ==========
 
 async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -449,7 +493,7 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• 🔔 Уведомления за 3 и 7 дней до платежа\n"
             f"• 📊 Расширенная статистика\n"
             f"• 🚀 Приоритетная поддержка\n\n"
-            f"<b>Выберите подписку:</b>"
+            f"<b>Выберите подпику:</b>"
         )
     
     await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='HTML')
@@ -715,48 +759,6 @@ async def test_simple(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"✅ Бот работает! (Ошибка БД: {e})")
 
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /status - проверка статуса бота"""
-    try:
-        # Получаем напоминания на завтра
-        tomorrow_reminders = db.get_reminders_for_notification(days_before=1)
-        
-        # Получаем статистику
-        with db.get_connection() as conn:
-            if conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM users")
-                users_count = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM reminders WHERE is_active = TRUE")
-                active_reminders = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM payments WHERE status = 'succeeded'")
-                successful_payments = cursor.fetchone()[0]
-            else:
-                users_count = 0
-                active_reminders = 0
-                successful_payments = 0
-        
-        status_text = (
-            f"<b>📊 Статус бота «НеЗабудьОплатить»</b>\n\n"
-            f"<b>👥 Пользователи:</b> {users_count}\n"
-            f"<b>📝 Активных напоминаний:</b> {active_reminders}\n"
-            f"<b>🔔 Уведомлений на завтра:</b> {len(tomorrow_reminders)}\n"
-            f"<b>💎 Успешных платежей:</b> {successful_payments}\n"
-            f"<b>⏰ Время уведомлений:</b> 10:00 по Москве\n"
-            f"<b>📅 Лимит бесплатных:</b> {FREE_LIMIT}\n"
-            f"<b>💳 ЮKassa:</b> {'✅ настроена' if yookassa.is_configured() else '❌ не настроена'}\n"
-            f"<b>🕒 Серверное время:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
-            f"<i>Бот работает стабильно! ✅</i>"
-        )
-        
-        await update.message.reply_text(status_text, parse_mode='HTML')
-        
-    except Exception as e:
-        logger.error(f"Ошибка команды status: {e}")
-        await update.message.reply_text("❌ Ошибка получения статуса.")
-
 # ========== ОБРАБОТЧИК КНОПОК ==========
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -991,7 +993,7 @@ async def buy_premium_handler(query, context):
         
         await query.edit_message_text(
             f"💳 <b>ОПЛАТА ПРЕМИУМ ПОДПИСКИ</b>\n\n"
-            f"<b>Подписка:</b> {price_info['text']}\n"
+            f"<b>Подпика:</b> {price_info['text']}\n"
             f"<b>Сумма:</b> {price_info['amount']}₽\n"
             f"<b>ID платежа:</b> {payment_id}\n\n"
             f"1. Нажмите кнопку '💳 Перейти к оплате'\n"
@@ -1120,7 +1122,7 @@ async def premium_faq_handler(query):
         "<b>2. Как происходит оплата?</b>\n"
         "Оплата через безопасную платежную систему ЮKassa.\n"
         "Принимаются карты РФ и зарубежные карты.\n\n"
-        "<b>3. Можно ли отменить подписку?</b>\n"
+        "<b>3. Можно ли отменить подпику?</b>\n"
         "Подписка действует до конца оплаченного периода.\n"
         "Автопродление не включено.\n\n"
         "<b>4. Что если я передумаю?</b>\n"
@@ -1189,6 +1191,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("admin_activate", admin_activate_command))
     app.add_handler(CommandHandler("testnotify", test_notify))
+    # ДОБАВЛЕНО: обработчик для команды /status
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("test", test_simple))
     app.add_handler(conv_handler)
