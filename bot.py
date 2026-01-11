@@ -1,4 +1,4 @@
-# bot.py - обновленная версия с исправлениями
+# bot.py - обновленная версия с рассылкой
 import os
 import logging
 from datetime import datetime, timedelta, time
@@ -61,6 +61,8 @@ PREMIUM_PRICES = {
 
 # Состояния для ConversationHandler
 TITLE, AMOUNT, DATE = range(3)
+# Состояния для рассылки с фото
+AWAITING_PHOTO, AWAITING_TEXT = range(2)
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ==========
 
@@ -783,10 +785,11 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка статистики: {e}")
         total_users = premium_users = total_reminders = successful_payments = 0
     
-    # Клавиатура
+    # Клавиатура с рассылкой
     keyboard = [
         [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
+        [InlineKeyboardButton("📨 Рассылка", callback_data="broadcast_text")],
         [
             InlineKeyboardButton("💎 Активировать", callback_data="admin_activate"),
             InlineKeyboardButton("🚫 Деактивировать", callback_data="admin_deactivate_menu")
@@ -804,9 +807,10 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• 💎 Премиум: {premium_users}\n"
             f"• 📝 Напоминаний: {total_reminders}\n"
             f"• 💰 Успешных платежей: {successful_payments}\n\n"
-            f"<b>Управление премиумом:</b>\n"
-            f"• 💎 Активация подписки\n"
-            f"• 🚫 Деактивация подписки\n\n"
+            f"<b>Доступные функции:</b>\n"
+            f"• 📨 Рассылка сообщений\n"
+            f"• 💎 Управление премиумом\n"
+            f"• 📊 Просмотр статистики\n\n"
             f"Выберите действие:",
             reply_markup=reply_markup,
             parse_mode='HTML'
@@ -819,9 +823,10 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• 💎 Премиум: {premium_users}\n"
             f"• 📝 Напоминаний: {total_reminders}\n"
             f"• 💰 Успешных платежей: {successful_payments}\n\n"
-            f"<b>Управление премиумом:</b>\n"
-            f"• 💎 Активация подписки\n"
-            f"• 🚫 Деактивация подписки\n\n"
+            f"<b>Доступные функции:</b>\n"
+            f"• 📨 Рассылка сообщений\n"
+            f"• 💎 Управление премиумом\n"
+            f"• 📊 Просмотр статистики\n\n"
             f"Выберите действие:",
             reply_markup=reply_markup,
             parse_mode='HTML'
@@ -1037,6 +1042,499 @@ async def admin_deactivate_command(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logger.error(f"Ошибка в admin_deactivate_command: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
+
+# ========== РАССЫЛКА СООБЩЕНИЙ ==========
+
+async def admin_broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда рассылки сообщений всем пользователям"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Команда только для администратора.")
+        return
+    
+    # Проверяем, есть ли текст для рассылки
+    if not context.args:
+        keyboard = [
+            [
+                InlineKeyboardButton("📝 Текстовая рассылка", callback_data="broadcast_text"),
+                InlineKeyboardButton("🖼️ Рассылка с фото", callback_data="broadcast_photo")
+            ],
+            [
+                InlineKeyboardButton("💎 Только премиум", callback_data="broadcast_premium"),
+                InlineKeyboardButton("🆓 Только бесплатные", callback_data="broadcast_free")
+            ],
+            [
+                InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
+                InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")
+            ],
+            [InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "📨 <b>РАССЫЛКА СООБЩЕНИЙ</b>\n\n"
+            "<b>Выберите тип рассылки:</b>\n\n"
+            "• 📝 <b>Текстовая</b> - только текст\n"
+            "• 🖼️ <b>С фото</b> - текст + изображение\n"
+            "• 💎 <b>Премиум</b> - только премиум пользователям\n"
+            "• 🆓 <b>Бесплатные</b> - только бесплатным пользователям\n\n"
+            "<b>Или используйте команды:</b>\n"
+            "<code>/broadcast текст</code> - всем\n"
+            "<code>/broadcast_premium текст</code> - премиум\n"
+            "<code>/broadcast_photo</code> - с фото\n\n"
+            "<b>Внимание:</b> Сообщение будет отправлено ВСЕМ выбранным пользователям!",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+        return
+    
+    # Если есть аргументы - текстовая рассылка всем
+    message_text = " ".join(context.args)
+    context.user_data['broadcast_type'] = 'all'
+    context.user_data['broadcast_message'] = message_text
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Да, отправить всем", callback_data=f"confirm_broadcast_all_{hash(message_text[:30]) % 10000}"),
+            InlineKeyboardButton("❌ Отменить", callback_data="cancel_broadcast")
+        ],
+        [
+            InlineKeyboardButton("💎 Только премиум", callback_data=f"confirm_broadcast_premium_{hash(message_text[:30]) % 10000}"),
+            InlineKeyboardButton("🆓 Только бесплатные", callback_data=f"confirm_broadcast_free_{hash(message_text[:30]) % 10000}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"⚠️ <b>ПОДТВЕРЖДЕНИЕ РАССЫЛКИ</b>\n\n"
+        f"<b>Тип:</b> Всем пользователям\n"
+        f"<b>Сообщение:</b>\n{message_text[:400]}\n\n"
+        f"<b>Выберите аудиторию:</b>",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+
+async def admin_broadcast_premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Рассылка только премиум пользователям"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Команда только для администратора.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💎 <b>РАССЫЛКА ПРЕМИУМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
+            "<b>Использование:</b>\n"
+            "<code>/broadcast_premium Ваш текст</code>\n\n"
+            "<b>Пример:</b>\n"
+            "<code>/broadcast_premium Специальное предложение для премиум пользователей!</code>\n\n"
+            "Сообщение будет отправлено только пользователям с активной премиум подпиской."
+        )
+        return
+    
+    message_text = " ".join(context.args)
+    context.user_data['broadcast_type'] = 'premium'
+    context.user_data['broadcast_message'] = message_text
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Да, отправить премиум", callback_data=f"confirm_broadcast_premium_{hash(message_text[:30]) % 10000}"),
+            InlineKeyboardButton("❌ Отменить", callback_data="cancel_broadcast")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"⚠️ <b>ПОДТВЕРЖДЕНИЕ РАССЫЛКИ</b>\n\n"
+        f"<b>Тип:</b> Только премиум пользователям\n"
+        f"<b>Сообщение:</b>\n{message_text[:400]}\n\n"
+        f"Подтверждаете отправку премиум пользователям?",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+
+async def admin_broadcast_photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало рассылки с фотографией"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Команда только для администратора.")
+        return
+    
+    # Просим отправить фото
+    await update.message.reply_text(
+        "🖼️ <b>РАССЫЛКА С ФОТОГРАФИЕЙ</b>\n\n"
+        "1. Отправьте мне фотографию (как файл или фото)\n"
+        "2. Затем отправьте текст сообщения\n\n"
+        "Или нажмите /cancel для отмены",
+        parse_mode='HTML'
+    )
+    
+    context.user_data['awaiting_photo'] = True
+    context.user_data['broadcast_type'] = 'photo'
+    return AWAITING_PHOTO
+
+async def handle_broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка фотографии для рассылки"""
+    if update.message.photo:
+        # Берем самое большое фото
+        photo = update.message.photo[-1]
+        context.user_data['photo_file_id'] = photo.file_id
+        context.user_data['photo_caption'] = update.message.caption or ""
+    elif update.message.document and update.message.document.mime_type.startswith('image/'):
+        context.user_data['photo_file_id'] = update.message.document.file_id
+        context.user_data['photo_caption'] = update.message.caption or ""
+    else:
+        await update.message.reply_text("❌ Пожалуйста, отправьте фотографию.")
+        return AWAITING_PHOTO
+    
+    await update.message.reply_text(
+        "✅ Фотография получена!\n\n"
+        "Теперь отправьте текст сообщения для рассылки.\n"
+        "Или напишите /skip чтобы отправить только фото.",
+        parse_mode='HTML'
+    )
+    
+    context.user_data['awaiting_photo'] = False
+    context.user_data['awaiting_text'] = True
+    return AWAITING_TEXT
+
+async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка текста для рассылки с фото"""
+    message_text = update.message.text
+    
+    if message_text == '/skip':
+        message_text = ""
+    
+    context.user_data['broadcast_message'] = message_text
+    context.user_data['awaiting_text'] = False
+    
+    # Показываем предпросмотр
+    photo_file_id = context.user_data.get('photo_file_id')
+    caption = context.user_data.get('photo_caption', '')
+    full_text = f"{caption}\n\n{message_text}".strip()
+    
+    try:
+        await update.message.reply_photo(
+            photo=photo_file_id,
+            caption=f"🖼️ <b>ПРЕДПРОСМОТР РАССЫЛКИ</b>\n\n{full_text[:800]}\n\n"
+                   f"<i>Это сообщение с фото будет отправлено выбранной аудитории.</i>",
+            parse_mode='HTML'
+        )
+    except:
+        await update.message.reply_text(
+            f"📋 <b>ПРЕДПРОСМОТР РАССЫЛКИ</b>\n\n"
+            f"<b>Фото:</b> ✅ загружено\n"
+            f"<b>Текст:</b>\n{full_text[:400]}\n\n"
+            f"<i>Это сообщение с фото будет отправлено выбранной аудитории.</i>",
+            parse_mode='HTML'
+        )
+    
+    # Предлагаем выбрать аудиторию
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Всем", callback_data=f"confirm_photo_all_{hash(full_text[:30]) % 10000}"),
+            InlineKeyboardButton("💎 Премиум", callback_data=f"confirm_photo_premium_{hash(full_text[:30]) % 10000}")
+        ],
+        [
+            InlineKeyboardButton("🆓 Бесплатные", callback_data=f"confirm_photo_free_{hash(full_text[:30]) % 10000}"),
+            InlineKeyboardButton("❌ Отменить", callback_data="cancel_broadcast")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "⚠️ <b>ВЫБЕРИТЕ АУДИТОРИЮ</b>\n\n"
+        "Кому отправить это сообщение с фото?",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    
+    return ConversationHandler.END
+
+async def broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена рассылки"""
+    await update.message.reply_text("❌ Рассылка отменена.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def admin_broadcast_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тестовая рассылка (только себе)"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Команда только для администратора.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "📨 <b>ТЕСТОВАЯ РАССЫЛКА</b>\n\n"
+            "<b>Использование:</b>\n"
+            "<code>/broadcast_test Текст сообщения</code>\n\n"
+            "<b>Пример:</b>\n"
+            "<code>/broadcast_test Проверка рассылки</code>\n\n"
+            "Сообщение будет отправлено только вам для проверки."
+        )
+        return
+    
+    message_text = " ".join(context.args)
+    
+    try:
+        # Отправляем тестовое сообщение себе
+        await update.message.reply_text(
+            f"📨 <b>ТЕСТОВАЯ РАССЫЛКА</b>\n\n{message_text}\n\n"
+            f"<i>Это тестовое сообщение. В реальной рассылке оно будет отправлено всем пользователям.</i>",
+            parse_mode='HTML'
+        )
+        
+        await update.message.reply_text(
+            f"✅ Тестовое сообщение отправлено вам.\n\n"
+            f"Для отправки всем пользователям используйте:\n"
+            f"<code>/broadcast {message_text}</code>",
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка тестовой рассылки: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
+
+# ========== ФУНКЦИИ РАССЫЛКИ ==========
+
+async def send_text_broadcast(context: ContextTypes.DEFAULT_TYPE, message_text: str, target_type: str, admin_id: int):
+    """Отправка текстовой рассылки"""
+    try:
+        conn = db.get_connection()
+        if not conn:
+            return 0, 0, []
+        
+        cursor = conn.cursor()
+        
+        # Выбираем пользователей по типу
+        if target_type == 'premium':
+            cursor.execute("""
+                SELECT telegram_id FROM users 
+                WHERE telegram_id IS NOT NULL 
+                AND is_premium = TRUE
+            """)
+            title = "💎 ПРЕМИУМ РАССЫЛКА"
+        elif target_type == 'free':
+            cursor.execute("""
+                SELECT telegram_id FROM users 
+                WHERE telegram_id IS NOT NULL 
+                AND is_premium = FALSE
+            """)
+            title = "📢 ОБЪЯВЛЕНИЕ"
+        else:  # all
+            cursor.execute("SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL")
+            title = "📢 ВАЖНОЕ ОБЪЯВЛЕНИЕ"
+        
+        users = cursor.fetchall()
+        cursor.close()
+        
+        if not users:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=f"❌ Нет пользователей для рассылки типа: {target_type}"
+            )
+            return 0, 0, []
+        
+        total_users = len(users)
+        sent_count = 0
+        failed_users = []
+        
+        # Отправляем прогресс начала
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=f"⏳ <b>НАЧАЛАСЬ РАССЫЛКА</b>\n\n"
+                 f"Тип: {target_type}\n"
+                 f"Пользователей: {total_users}\n"
+                 f"Сообщение: {message_text[:100]}...",
+            parse_mode='HTML'
+        )
+        
+        # Отправляем сообщение каждому пользователю
+        for i, (telegram_id,) in enumerate(users, 1):
+            try:
+                await context.bot.send_message(
+                    chat_id=telegram_id,
+                    text=f"{title}\n\n{message_text}\n\n"
+                         f"<i>С уважением, команда НеЗабудьОплатить</i>",
+                    parse_mode='HTML'
+                )
+                sent_count += 1
+                
+                # Логируем прогресс
+                if i % 20 == 0:
+                    progress = i / total_users * 100
+                    logger.info(f"📨 {target_type}: отправлено {i}/{total_users} ({progress:.1f}%)")
+                
+                # Небольшая задержка
+                import asyncio
+                await asyncio.sleep(0.03)
+                
+            except Exception as e:
+                logger.error(f"Ошибка отправки пользователю {telegram_id}: {e}")
+                failed_users.append(telegram_id)
+        
+        # Отчет
+        success_rate = (sent_count / total_users * 100) if total_users > 0 else 0
+        await send_broadcast_report(context, admin_id, sent_count, total_users, 
+                                  failed_users, message_text, target_type, 'text')
+        
+        return sent_count, total_users, failed_users
+        
+    except Exception as e:
+        logger.error(f"Критическая ошибка рассылки: {e}")
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=f"❌ <b>КРИТИЧЕСКАЯ ОШИБКА РАССЫЛКИ</b>\n\n{str(e)[:500]}",
+            parse_mode='HTML'
+        )
+        return 0, 0, []
+
+async def send_photo_broadcast(context: ContextTypes.DEFAULT_TYPE, photo_file_id: str, 
+                             caption: str, message_text: str, target_type: str, admin_id: int):
+    """Отправка рассылки с фотографией"""
+    try:
+        conn = db.get_connection()
+        if not conn:
+            return 0, 0, []
+        
+        cursor = conn.cursor()
+        
+        # Выбираем пользователей по типу
+        if target_type == 'premium':
+            cursor.execute("""
+                SELECT telegram_id FROM users 
+                WHERE telegram_id IS NOT NULL 
+                AND is_premium = TRUE
+            """)
+        elif target_type == 'free':
+            cursor.execute("""
+                SELECT telegram_id FROM users 
+                WHERE telegram_id IS NOT NULL 
+                AND is_premium = FALSE
+            """)
+        else:  # all
+            cursor.execute("SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL")
+        
+        users = cursor.fetchall()
+        cursor.close()
+        
+        if not users:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=f"❌ Нет пользователей для рассылки типа: {target_type}"
+            )
+            return 0, 0, []
+        
+        total_users = len(users)
+        sent_count = 0
+        failed_users = []
+        
+        # Формируем полный текст
+        full_caption = f"{caption}\n\n{message_text}".strip() if message_text else caption
+        
+        # Отправляем прогресс начала
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=f"🖼️ <b>НАЧАЛАСЬ РАССЫЛКА С ФОТО</b>\n\n"
+                 f"Тип: {target_type}\n"
+                 f"Пользователей: {total_users}",
+            parse_mode='HTML'
+        )
+        
+        # Отправляем фото каждому пользователю
+        for i, (telegram_id,) in enumerate(users, 1):
+            try:
+                await context.bot.send_photo(
+                    chat_id=telegram_id,
+                    photo=photo_file_id,
+                    caption=f"📢 <b>ВАЖНОЕ ОБЪЯВЛЕНИЕ</b>\n\n{full_caption}\n\n"
+                           f"<i>С уважением, команда НеЗабудьОплатить</i>",
+                    parse_mode='HTML'
+                )
+                sent_count += 1
+                
+                # Логируем прогресс
+                if i % 15 == 0:  # Реже из-за фото
+                    progress = i / total_users * 100
+                    logger.info(f"🖼️ {target_type}: отправлено {i}/{total_users} ({progress:.1f}%)")
+                
+                # Большая задержка для фото
+                import asyncio
+                await asyncio.sleep(0.1)
+                
+            except Exception as e:
+                logger.error(f"Ошибка отправки фото пользователю {telegram_id}: {e}")
+                failed_users.append(telegram_id)
+        
+        # Отчет
+        await send_broadcast_report(context, admin_id, sent_count, total_users, 
+                                  failed_users, f"[ФОТО] {full_caption[:100]}...", 
+                                  target_type, 'photo')
+        
+        return sent_count, total_users, failed_users
+        
+    except Exception as e:
+        logger.error(f"Критическая ошибка фото-рассылки: {e}")
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=f"❌ <b>КРИТИЧЕСКАЯ ОШИБКА ФОТО-РАССЫЛКИ</b>\n\n{str(e)[:500]}",
+            parse_mode='HTML'
+        )
+        return 0, 0, []
+
+async def send_broadcast_report(context: ContextTypes.DEFAULT_TYPE, admin_id: int, 
+                              sent_count: int, total_users: int, failed_users: list,
+                              message_text: str, target_type: str, broadcast_type: str):
+    """Отправка отчета о рассылке"""
+    try:
+        success_rate = (sent_count / total_users * 100) if total_users > 0 else 0
+        
+        # Иконка типа рассылки
+        type_icon = "🖼️" if broadcast_type == 'photo' else "📝"
+        
+        # Текст типа аудитории
+        target_text = {
+            'all': 'всем пользователям',
+            'premium': 'премиум пользователям',
+            'free': 'бесплатным пользователям'
+        }.get(target_type, target_type)
+        
+        report = (
+            f"{type_icon} <b>ОТЧЕТ О РАССЫЛКЕ</b>\n\n"
+            f"<b>Тип:</b> {target_text}\n"
+            f"<b>Формат:</b> {'Фото + текст' if broadcast_type == 'photo' else 'Текст'}\n\n"
+            f"<b>Статистика:</b>\n"
+            f"• 👥 Всего получателей: {total_users}\n"
+            f"• ✅ Успешно отправлено: {sent_count}\n"
+            f"• ❌ Не отправлено: {len(failed_users)}\n"
+            f"• 📈 Успешность: {success_rate:.1f}%\n\n"
+            f"<b>Сообщение:</b>\n{message_text[:300]}"
+        )
+        
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=report,
+            parse_mode='HTML'
+        )
+        
+        # Если есть неудачные отправки
+        if failed_users:
+            failed_count = len(failed_users)
+            sample = "\n".join(map(str, failed_users[:20]))
+            
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=f"📋 <b>Не отправлено (первые 20 из {failed_count}):</b>\n\n{sample}",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        logger.error(f"Ошибка отправки отчета: {e}")
 
 # ========== ОБРАБОТЧИК КНОПОК ==========
 
@@ -1268,10 +1766,183 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Спасибо за покупку! 💎",
                 parse_mode='HTML'
             )
+        
+        # ========== ОБРАБОТЧИКИ РАССЫЛКИ ==========
+            
+        elif query.data == "broadcast_text":
+            await query.edit_message_text(
+                "📝 <b>ТЕКСТОВАЯ РАССЫЛКА</b>\n\n"
+                "Используйте команду:\n"
+                "<code>/broadcast Ваш текст</code>\n\n"
+                "<b>Пример:</b>\n"
+                "<code>/broadcast Новое обновление! Добавлены крутые функции</code>\n\n"
+                "<b>Или выберите аудиторию:</b>",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("👥 Всем", callback_data="broadcast_all_menu"),
+                        InlineKeyboardButton("💎 Премиум", callback_data="broadcast_premium_menu")
+                    ],
+                    [
+                        InlineKeyboardButton("🆓 Бесплатные", callback_data="broadcast_free_menu"),
+                        InlineKeyboardButton("↩️ Назад", callback_data="admin_panel")
+                    ]
+                ]),
+                parse_mode='HTML'
+            )
+            
+        elif query.data == "broadcast_photo":
+            await query.edit_message_text(
+                "🖼️ <b>РАССЫЛКА С ФОТО</b>\n\n"
+                "Используйте команду:\n"
+                "<code>/broadcast_photo</code>\n\n"
+                "Затем отправьте фото и текст.\n\n"
+                "<b>Или вернитесь в меню рассылки:</b>",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
+                ]),
+                parse_mode='HTML'
+            )
+            
+        elif query.data == "broadcast_premium":
+            await query.edit_message_text(
+                "💎 <b>РАССЫЛКА ПРЕМИУМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
+                "Используйте команду:\n"
+                "<code>/broadcast_premium Ваш текст</code>\n\n"
+                "<b>Пример:</b>\n"
+                "<code>/broadcast_premium Специальное предложение для наших премиум пользователей!</code>\n\n"
+                "<b>Или вернитесь в меню рассылки:</b>",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
+                ]),
+                parse_mode='HTML'
+            )
+            
+        elif query.data == "broadcast_free":
+            await query.edit_message_text(
+                "🆓 <b>РАССЫЛКА БЕСПЛАТНЫМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
+                "Используйте команду:\n"
+                "<code>/broadcast Ваш текст</code>\n\n"
+                "А затем выберите 'Только бесплатные'\n\n"
+                "<b>Или вернитесь в меню рассылки:</b>",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
+                ]),
+                parse_mode='HTML'
+            )
+            
+        elif query.data == "broadcast_all_menu":
+            await query.edit_message_text(
+                "👥 <b>РАССЫЛКА ВСЕМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
+                "Используйте команду:\n"
+                "<code>/broadcast Ваш текст</code>\n\n"
+                "Или вернитесь в меню рассылки:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
+                ]),
+                parse_mode='HTML'
+            )
+            
+        elif query.data == "broadcast_premium_menu":
+            await query.edit_message_text(
+                "💎 <b>РАССЫЛКА ПРЕМИУМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
+                "Используйте команду:\n"
+                "<code>/broadcast_premium Ваш текст</code>\n\n"
+                "Или вернитесь в меню рассылки:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
+                ]),
+                parse_mode='HTML'
+            )
+            
+        elif query.data == "broadcast_free_menu":
+            await query.edit_message_text(
+                "🆓 <b>РАССЫЛКА БЕСПЛАТНЫМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
+                "Используйте команду:\n"
+                "<code>/broadcast Ваш текст</code>\n\n"
+                "А затем выберите 'Только бесплатные'\n\n"
+                "Или вернитесь в меню рассылки:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
+                ]),
+                parse_mode='HTML'
+            )
+            
+        # ОБРАБОТЧИКИ ПОДТВЕРЖДЕНИЯ РАССЫЛКИ
+        elif query.data.startswith("confirm_broadcast_all_"):
+            await handle_confirm_broadcast(query, context, 'all', 'text')
+            
+        elif query.data.startswith("confirm_broadcast_premium_"):
+            await handle_confirm_broadcast(query, context, 'premium', 'text')
+            
+        elif query.data.startswith("confirm_broadcast_free_"):
+            await handle_confirm_broadcast(query, context, 'free', 'text')
+            
+        elif query.data.startswith("confirm_photo_all_"):
+            await handle_confirm_broadcast(query, context, 'all', 'photo')
+            
+        elif query.data.startswith("confirm_photo_premium_"):
+            await handle_confirm_broadcast(query, context, 'premium', 'photo')
+            
+        elif query.data.startswith("confirm_photo_free_"):
+            await handle_confirm_broadcast(query, context, 'free', 'photo')
+            
+        elif query.data == "cancel_broadcast":
+            await query.edit_message_text("❌ Рассылка отменена.")
+            context.user_data.pop('broadcast_message', None)
+            context.user_data.pop('photo_file_id', None)
+            context.user_data.pop('photo_caption', None)
             
     except Exception as e:
         logger.error(f"Ошибка в button_handler: {e}")
         await query.message.reply_text("⚠️ Произошла ошибка. Попробуйте команду /start")
+
+async def handle_confirm_broadcast(query, context, target_type, broadcast_type):
+    """Обработка подтверждения рассылки"""
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text("❌ Доступ запрещен.")
+        return
+    
+    await query.edit_message_text(
+        f"⏳ <b>НАЧИНАЮ РАССЫЛКУ...</b>\n\n"
+        f"Тип: {target_type}\n"
+        f"Формат: {'Фото' if broadcast_type == 'photo' else 'Текст'}\n\n"
+        f"<i>Это может занять несколько минут. Вы получите отчет по завершении.</i>",
+        parse_mode='HTML'
+    )
+    
+    import asyncio
+    
+    if broadcast_type == 'photo':
+        # Фото рассылка
+        photo_file_id = context.user_data.get('photo_file_id')
+        caption = context.user_data.get('photo_caption', '')
+        message_text = context.user_data.get('broadcast_message', '')
+        
+        if not photo_file_id:
+            await query.edit_message_text("❌ Ошибка: фото не найдено.")
+            return
+        
+        asyncio.create_task(
+            send_photo_broadcast(context, photo_file_id, caption, message_text, 
+                               target_type, ADMIN_ID)
+        )
+    else:
+        # Текстовая рассылка
+        message_text = context.user_data.get('broadcast_message')
+        if not message_text:
+            await query.edit_message_text("❌ Ошибка: текст сообщения не найден.")
+            return
+        
+        asyncio.create_task(
+            send_text_broadcast(context, message_text, target_type, ADMIN_ID)
+        )
+    
+    # Очищаем данные
+    context.user_data.pop('broadcast_message', None)
+    context.user_data.pop('photo_file_id', None)
+    context.user_data.pop('photo_caption', None)
+
+# ========== АДМИН ОБРАБОТЧИКИ ==========
 
 async def admin_stats_handler(query, context):
     """Обработчик статистики админа"""
@@ -1447,6 +2118,16 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     
+    # ConversationHandler для рассылки с фото
+    broadcast_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('broadcast_photo', admin_broadcast_photo_command)],
+        states={
+            AWAITING_PHOTO: [MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_broadcast_photo)],
+            AWAITING_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast_text)],
+        },
+        fallbacks=[CommandHandler('cancel', broadcast_cancel)]
+    )
+    
     # Регистрируем обработчики команд
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -1457,9 +2138,13 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("admin_activate", admin_activate_command))
     app.add_handler(CommandHandler("admin_deactivate", admin_deactivate_command))
+    app.add_handler(CommandHandler("broadcast", admin_broadcast_command))
+    app.add_handler(CommandHandler("broadcast_premium", admin_broadcast_premium_command))
+    app.add_handler(CommandHandler("broadcast_test", admin_broadcast_test_command))
     app.add_handler(CommandHandler("test", test_command))
     app.add_handler(CommandHandler("test_notify", test_notify_command))
     app.add_handler(conv_handler)
+    app.add_handler(broadcast_conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
     
     # Настраиваем планировщик уведомлений
@@ -1480,7 +2165,11 @@ def main():
     app.add_error_handler(error_handler)
     
     print("✅ Команды зарегистрированы")
-    print("📝 Доступные команды: /start, /new, /list, /premium, /buy, /status, /help, /admin, /test, /test_notify")
+    print("📝 Доступные команды:")
+    print("  • /start, /new, /list, /premium, /buy, /status, /help")
+    print("  • /admin, /admin_activate, /admin_deactivate")
+    print("  • /broadcast, /broadcast_premium, /broadcast_photo, /broadcast_test")
+    print("  • /test, /test_notify")
     print("=" * 50)
     print("🤖 Бот запускается...")
     
@@ -1489,4 +2178,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
