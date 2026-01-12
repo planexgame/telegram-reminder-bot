@@ -240,7 +240,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== КНОПКА "СОЗДАТЬ НАПОМИНАНИЕ" ==========
 
 async def create_reminder_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопки 'Создать напоминание'"""
+    """Обработчик кнопки 'Создать напоминание' - ИСПРАВЛЕННЫЙ"""
     query = update.callback_query
     user = query.from_user
     await query.answer()
@@ -255,7 +255,7 @@ async def create_reminder_button(update: Update, context: ContextTypes.DEFAULT_T
         
         if not user_id:
             await query.edit_message_text("❌ Ошибка базы данных.")
-            return
+            return ConversationHandler.END
         
         premium_status = db.get_user_premium_status(user_id)
         has_premium = premium_status.get('has_active_premium', False) if premium_status else False
@@ -276,27 +276,30 @@ async def create_reminder_button(update: Update, context: ContextTypes.DEFAULT_T
                     reply_markup=reply_markup,
                     parse_mode='HTML'
                 )
-                return
+                return ConversationHandler.END
         
         # Начинаем процесс создания напоминания
         await query.edit_message_text(
             "📝 <b>Создание напоминания</b>\n\n"
             "Шаг 1 из 3\n"
             "Введите <b>название платежа</b>:\n\n"
-            "Например: <i>Коммунальные услуги, Интернет, Кредит</i>",
+            "Например: <i>Коммунальные услуги, Интернет, Кредит</i>\n\n"
+            "<i>Напишите 'отмена' для отмены</i>",
             parse_mode='HTML'
         )
         
         # Сохраняем данные в context для ConversationHandler
         context.user_data['user_id'] = user_id
-        context.user_data['conversation_started'] = True
+        context.user_data['from_button'] = True
+        context.user_data['message_id'] = query.message.message_id
+        context.user_data['chat_id'] = query.message.chat_id
         
-        # Устанавливаем состояние для получения названия
         return TITLE
         
     except Exception as e:
         logger.error(f"Ошибка в create_reminder_button: {e}")
         await query.edit_message_text("❌ Ошибка при создании напоминания.")
+        return ConversationHandler.END
 
 # ========== КОМАНДА /NEW ==========
 
@@ -341,11 +344,13 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📝 <b>Создание напоминания</b>\n\n"
             "Шаг 1 из 3\n"
             "Введите <b>название платежа</b>:\n\n"
-            "Например: <i>Коммунальные услуги, Интернет, Кредит</i>",
+            "Например: <i>Коммунальные услуги, Интернет, Кредит</i>\n\n"
+            "<i>Напишите 'отмена' для отмены</i>",
             parse_mode='HTML'
         )
         
         context.user_data['user_id'] = user_id
+        context.user_data['from_button'] = False
         return TITLE
         
     except Exception as e:
@@ -357,6 +362,11 @@ async def get_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получаем название"""
     title = update.message.text.strip()
     
+    if title.lower() == 'отмена':
+        await update.message.reply_text("❌ Создание напоминания отменено.")
+        context.user_data.clear()
+        return ConversationHandler.END
+    
     if len(title) < 2:
         await update.message.reply_text("❌ Название слишком короткое. Введите снова:")
         return TITLE
@@ -364,9 +374,11 @@ async def get_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['title'] = title
     
     await update.message.reply_text(
+        "✅ Название сохранено!\n\n"
         "Шаг 2 из 3\n"
         "Введите <b>сумму платежа</b> (в рублях):\n\n"
-        "Например: <i>4500</i> или <i>1250.50</i>",
+        "Например: <i>4500</i> или <i>1250.50</i>\n\n"
+        "<i>Напишите 'отмена' для отмены</i>",
         parse_mode='HTML'
     )
     
@@ -375,19 +387,27 @@ async def get_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получаем сумму"""
     try:
-        amount_text = update.message.text.replace(',', '.').strip()
-        amount = float(amount_text)
+        amount_text = update.message.text.strip()
+        
+        if amount_text.lower() == 'отмена':
+            await update.message.reply_text("❌ Создание напоминания отменено.")
+            context.user_data.clear()
+            return ConversationHandler.END
+        
+        amount = float(amount_text.replace(',', '.'))
         
         if amount <= 0:
-            await update.message.reply_text("❌ Сумма должна быть больше 0.")
+            await update.message.reply_text("❌ Сумма должна быть больше 0. Введите снова:")
             return AMOUNT
         
         context.user_data['amount'] = amount
         
         await update.message.reply_text(
+            "✅ Сумма сохранена!\n\n"
             "Шаг 3 из 3\n"
             "Введите <b>дату платежа</b> (ДД.ММ.ГГГГ):\n\n"
-            "Например: <i>25.01.2024</i>",
+            "Например: <i>25.01.2024</i>\n\n"
+            "<i>Напишите 'отмена' для отмены</i>",
             parse_mode='HTML'
         )
         
@@ -401,19 +421,27 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получаем дату и сохраняем"""
     try:
         date_text = update.message.text.strip()
+        
+        if date_text.lower() == 'отмена':
+            await update.message.reply_text("❌ Создание напоминания отменено.")
+            context.user_data.clear()
+            return ConversationHandler.END
+        
         day, month, year = map(int, date_text.split('.'))
         payment_date = datetime(year, month, day).date()
         
         if payment_date < datetime.now().date():
-            await update.message.reply_text("❌ Дата должна быть в будущем.")
+            await update.message.reply_text("❌ Дата должна быть в будущем. Введите снова:")
             return DATE
         
         user_id = context.user_data.get('user_id')
         title = context.user_data.get('title')
         amount = context.user_data.get('amount')
+        from_button = context.user_data.get('from_button', False)
         
         if not all([user_id, title, amount]):
             await update.message.reply_text("❌ Ошибка данных. Начните заново.")
+            context.user_data.clear()
             return ConversationHandler.END
         
         date_str = payment_date.strftime('%Y-%m-%d')
@@ -432,15 +460,41 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await update.message.reply_text(
+            success_message = (
                 f"✅ <b>Напоминание создано!</b>\n\n"
                 f"<b>Название:</b> {title}\n"
                 f"<b>Сумма:</b> {amount}₽\n"
                 f"<b>Дата:</b> {date_text}\n\n"
-                f"Вы получите уведомление за день до платежа.",
-                reply_markup=reply_markup,
-                parse_mode='HTML'
+                f"Вы получите уведомление за день до платежа."
             )
+            
+            if from_button:
+                # Если начали с кнопки, редактируем сообщение
+                message_id = context.user_data.get('message_id')
+                chat_id = context.user_data.get('chat_id')
+                
+                try:
+                    await update._bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=success_message,
+                        reply_markup=reply_markup,
+                        parse_mode='HTML'
+                    )
+                except:
+                    # Если не удалось редактировать, отправляем новое сообщение
+                    await update.message.reply_text(
+                        success_message,
+                        reply_markup=reply_markup,
+                        parse_mode='HTML'
+                    )
+            else:
+                # Если начали с команды, отправляем новое сообщение
+                await update.message.reply_text(
+                    success_message,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
         else:
             await update.message.reply_text("❌ Ошибка сохранения.")
         
@@ -449,7 +503,7 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.error(f"Ошибка в get_date: {e}")
-        await update.message.reply_text("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ")
+        await update.message.reply_text("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ\n\nНапример: <i>25.01.2024</i>", parse_mode='HTML')
         return DATE
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -813,16 +867,12 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== ОБРАБОТЧИК КНОПОК ==========
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик inline-кнопок"""
+    """Обработчик inline-кнопок (кроме create_reminder)"""
     query = update.callback_query
     await query.answer()
     
     try:
-        if query.data == "create_reminder":
-            # Запускаем создание напоминания через кнопку
-            await create_reminder_button(update, context)
-            
-        elif query.data == "list":
+        if query.data == "list":
             await handle_list_button(update, context)
             
         elif query.data == "premium_info":
@@ -1204,7 +1254,7 @@ def main():
     
     app = Application.builder().token(TOKEN).build()
     
-    # ConversationHandler для создания напоминаний
+    # ConversationHandler для создания напоминаний - ИСПРАВЛЕННЫЙ
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('new', new_command),
@@ -1227,9 +1277,12 @@ def main():
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("admin_activate", admin_activate_command))
+    
+    # Важно: сначала ConversationHandler, потом остальные CallbackQueryHandler
     app.add_handler(conv_handler)
     
-    app.add_handler(CallbackQueryHandler(button_handler))
+    # Общий обработчик кнопок (кроме create_reminder)
+    app.add_handler(CallbackQueryHandler(button_handler, pattern='^(?!create_reminder).*$'))
     
     # Планировщик уведомлений
     job_queue = app.job_queue
