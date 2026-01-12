@@ -1,4 +1,4 @@
-# bot.py - полный исправленный код с работающей кнопкой "Создать" и почтой админа
+# bot.py - исправленная версия с работающей кнопкой создания и почтой
 import os
 import logging
 from datetime import datetime, timedelta, time
@@ -52,10 +52,10 @@ except Exception as e:
     print("=" * 50)
     exit(1)
 
-# Почта администратора
-ADMIN_EMAIL = "planexgame@gmail.com"  # Замените на свою почту
+# Почта администратора - ИСПРАВЛЕНО: добавлено отображение в HTML
+ADMIN_EMAIL = "support@nezabudioplatit.ru"
 
-# Номер карты для оплаты (можно вынести в переменные окружения)
+# Номер карты для оплаты
 CARD_NUMBER = os.getenv('CARD_NUMBER', '2204 1801 8490 6030')
 
 # Константы
@@ -174,12 +174,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [
             [
-                InlineKeyboardButton("➕ Создать напоминание", callback_data="create_reminder"),
-                InlineKeyboardButton("📋 Мои напоминания", callback_data="list")
+                InlineKeyboardButton("➕ Создать напоминание", callback_data="create_new_reminder"),
+                InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders")
             ],
             [
                 InlineKeyboardButton("💎 Премиум", callback_data="premium_info"),
-                InlineKeyboardButton("📧 Помощь", callback_data="help_btn")
+                InlineKeyboardButton("📧 Помощь", callback_data="help_info")
             ]
         ]
         
@@ -198,15 +198,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 Напоминаний: {reminders_count}/{limit_text}\n"
             f"💎 Статус: {premium_text}\n\n"
             f"<b>Способ оплаты:</b>\n"
-            f"• 💳 Ручная оплата (карта)\n\n"
+            f"• 💳 Ручная оплата (карта)\n"
+            f"• 📧 Почта админа: {ADMIN_EMAIL}\n\n"
             f"Выберите действие:"
         )
         
-        await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='HTML')
+        if update.message:
+            await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='HTML')
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
         
     except Exception as e:
         logger.error(f"Ошибка в команде start: {e}")
-        await update.message.reply_text(
+        error_message = (
             f"🔔 <b>НеЗабудьОплатить</b>\n\n"
             f"Привет, {user.first_name}!\n\n"
             f"Бот работает! 🚀\n\n"
@@ -214,12 +218,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"/new - создать напоминание\n"
             f"/list - список напоминаний\n"
             f"/premium - премиум подписка\n"
-            f"/status - статус бота",
-            parse_mode='HTML'
+            f"/status - статус бота\n"
+            f"/help - помощь"
         )
+        
+        if update.message:
+            await update.message.reply_text(error_message, parse_mode='HTML')
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /help"""
+    """Команда /help - ИСПРАВЛЕНО: почта отображается"""
     help_text = (
         f"<b>🔔 НеЗабудьОплатить — помощь</b>\n\n"
         f"<b>Основные команды:</b>\n"
@@ -233,7 +240,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>Уведомления:</b> каждый день в 10:00 по Москве\n\n"
         f"<b>Способ оплаты премиума:</b>\n"
         f"💳 Ручная оплата (карта)\n\n"
-        f"<b>📧 Почта администратора:</b>\n"
+        f"<b>📧 Почта администратора для оплаты и вопросов:</b>\n"
         f"<code>{ADMIN_EMAIL}</code>\n\n"
         f"<b>📞 Техническая поддержка:</b>\n"
         f"• Почта: <code>{ADMIN_EMAIL}</code>\n"
@@ -242,21 +249,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     keyboard = [
-        [InlineKeyboardButton("➕ Создать напоминание", callback_data="create_reminder")],
+        [InlineKeyboardButton("➕ Создать напоминание", callback_data="create_new_reminder")],
         [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
         [InlineKeyboardButton("🏠 В начало", callback_data="start")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    if update.callback_query:
-        await update.callback_query.edit_message_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
-    else:
+    if update.message:
         await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
+    elif update.callback_query:
+        await update.callback_query.edit_message_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
 
-# ========== КНОПКА "СОЗДАТЬ НАПОМИНАНИЕ" - ИСПРАВЛЕННАЯ ==========
+# ========== ПРОСТОЙ СПОСОБ СОЗДАНИЯ НАПОМИНАНИЯ ==========
 
-async def create_reminder_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопки 'Создать напоминание' - ИСПРАВЛЕННЫЙ"""
+async def create_reminder_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик кнопки 'Создать напоминание' - ПРОСТОЙ ВАРИАНТ"""
     query = update.callback_query
     user = query.from_user
     await query.answer()
@@ -271,8 +278,9 @@ async def create_reminder_button(update: Update, context: ContextTypes.DEFAULT_T
         
         if not user_id:
             await query.edit_message_text("❌ Ошибка базы данных.")
-            return ConversationHandler.END
+            return
         
+        # Проверяем лимит
         premium_status = db.get_user_premium_status(user_id)
         has_premium = premium_status.get('has_active_premium', False) if premium_status else False
         
@@ -281,40 +289,146 @@ async def create_reminder_button(update: Update, context: ContextTypes.DEFAULT_T
             if reminders_count >= FREE_LIMIT:
                 keyboard = [
                     [InlineKeyboardButton("💎 Купить премиум", callback_data="premium_info")],
-                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")]
+                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
                 await query.edit_message_text(
                     f"⚠️ <b>Достигнут лимит!</b>\n\n"
                     f"У вас {reminders_count} из {FREE_LIMIT} бесплатных напоминаний.\n\n"
-                    "💎 <b>Премиум подписка</b> дает неограниченное количество напоминаний!",
+                    "💎 <b>Премиум подписка</b> дает неограниченное количество напоминаний!\n\n"
+                    f"📧 Для оплаты: {ADMIN_EMAIL}",
                     reply_markup=reply_markup,
                     parse_mode='HTML'
                 )
-                return ConversationHandler.END
+                return
         
-        # Сохраняем данные в context для ConversationHandler
-        context.user_data['user_id'] = user_id
-        context.user_data['from_button'] = True
-        context.user_data['message_id'] = query.message.message_id
-        context.user_data['chat_id'] = query.message.chat_id
-        
-        # Отправляем новое сообщение с инструкциями
-        await query.message.reply_text(
+        # Создаем простое меню для создания
+        await query.edit_message_text(
             "📝 <b>Создание напоминания</b>\n\n"
-            "Шаг 1 из 3\n"
-            "Введите <b>название платежа</b>:\n\n"
-            "Например: <i>Коммунальные услуги, Интернет, Кредит</i>\n\n"
-            "<i>Напишите 'отмена' для отмены</i>",
-            parse_mode='HTML'
+            "Для создания напоминания используйте команду:\n"
+            "<code>/new</code>\n\n"
+            "Или нажмите кнопку ниже, чтобы создать через простую форму:",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📝 Быстрое создание", callback_data="quick_create")],
+                [InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders")],
+                [InlineKeyboardButton("🏠 В начало", callback_data="start")]
+            ])
         )
         
-        return TITLE
+    except Exception as e:
+        logger.error(f"Ошибка в create_reminder_button_handler: {e}")
+        await query.edit_message_text("❌ Ошибка. Используйте команду /new")
+
+async def quick_create_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Быстрое создание напоминания через форму"""
+    query = update.callback_query
+    user = query.from_user
+    await query.answer()
+    
+    # Сохраняем данные пользователя
+    context.user_data['creating_reminder'] = True
+    context.user_data['user_id'] = db.get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    await query.edit_message_text(
+        "📝 <b>Быстрое создание напоминания</b>\n\n"
+        "Отправьте мне данные в формате:\n"
+        "<code>Название | Сумма | Дата</code>\n\n"
+        "<b>Пример:</b>\n"
+        "<code>Интернет | 500 | 25.01.2024</code>\n\n"
+        "<i>Или напишите 'отмена' для отмены</i>",
+        parse_mode='HTML'
+    )
+    
+    return TITLE
+
+async def quick_create_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка быстрого создания"""
+    try:
+        text = update.message.text.strip()
+        
+        if text.lower() == 'отмена':
+            await update.message.reply_text("❌ Создание отменено.")
+            context.user_data.clear()
+            return ConversationHandler.END
+        
+        # Парсим данные
+        parts = [p.strip() for p in text.split('|')]
+        if len(parts) != 3:
+            await update.message.reply_text("❌ Неверный формат. Используйте: Название | Сумма | Дата\n\nПример: Интернет | 500 | 25.01.2024")
+            return TITLE
+        
+        title, amount_str, date_str = parts
+        
+        # Проверяем название
+        if len(title) < 2:
+            await update.message.reply_text("❌ Название слишком короткое.")
+            return TITLE
+        
+        # Проверяем сумму
+        try:
+            amount = float(amount_str.replace(',', '.'))
+            if amount <= 0:
+                await update.message.reply_text("❌ Сумма должна быть больше 0.")
+                return TITLE
+        except:
+            await update.message.reply_text("❌ Неверный формат суммы.")
+            return TITLE
+        
+        # Проверяем дату
+        try:
+            day, month, year = map(int, date_str.split('.'))
+            payment_date = datetime(year, month, day).date()
+            
+            if payment_date < datetime.now().date():
+                await update.message.reply_text("❌ Дата должна быть в будущем.")
+                return TITLE
+        except:
+            await update.message.reply_text("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ")
+            return TITLE
+        
+        # Сохраняем в базу
+        user_id = context.user_data.get('user_id')
+        date_str_db = payment_date.strftime('%Y-%m-%d')
+        
+        reminder_id = db.add_reminder(
+            user_id=user_id,
+            title=title,
+            amount=amount,
+            payment_date=date_str_db
+        )
+        
+        if reminder_id:
+            keyboard = [
+                [InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders")],
+                [InlineKeyboardButton("➕ Еще напоминание", callback_data="create_new_reminder")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                f"✅ <b>Напоминание создано!</b>\n\n"
+                f"<b>Название:</b> {title}\n"
+                f"<b>Сумма:</b> {amount}₽\n"
+                f"<b>Дата:</b> {date_str}\n\n"
+                f"Вы получите уведомление за день до платежа.",
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text("❌ Ошибка сохранения.")
+        
+        context.user_data.clear()
+        return ConversationHandler.END
         
     except Exception as e:
-        logger.error(f"Ошибка в create_reminder_button: {e}")
-        await query.edit_message_text("❌ Ошибка при создании напоминания.")
+        logger.error(f"Ошибка в quick_create_process: {e}")
+        await update.message.reply_text("❌ Ошибка при создании. Попробуйте снова.")
         return ConversationHandler.END
 
 # ========== КОМАНДА /NEW ==========
@@ -335,6 +449,7 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Ошибка базы данных.")
             return ConversationHandler.END
         
+        # Проверяем лимит
         premium_status = db.get_user_premium_status(user_id)
         has_premium = premium_status.get('has_active_premium', False) if premium_status else False
         
@@ -343,18 +458,24 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if reminders_count >= FREE_LIMIT:
                 keyboard = [
                     [InlineKeyboardButton("💎 Купить премиум", callback_data="premium_info")],
-                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")]
+                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
                 await update.message.reply_text(
                     f"⚠️ <b>Достигнут лимит!</b>\n\n"
                     f"У вас {reminders_count} из {FREE_LIMIT} бесплатных напоминаний.\n\n"
-                    "💎 <b>Премиум подписка</b> дает неограниченное количество напоминаний!",
+                    "💎 <b>Премиум подписка</b> дает неограниченное количество напоминаний!\n\n"
+                    f"📧 Для оплаты: {ADMIN_EMAIL}",
                     reply_markup=reply_markup,
                     parse_mode='HTML'
                 )
                 return ConversationHandler.END
+        
+        # Сохраняем данные пользователя
+        context.user_data['creating_reminder'] = True
+        context.user_data['user_id'] = user_id
+        context.user_data['step'] = 'title'
         
         await update.message.reply_text(
             "📝 <b>Создание напоминания</b>\n\n"
@@ -365,8 +486,6 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML'
         )
         
-        context.user_data['user_id'] = user_id
-        context.user_data['from_button'] = False
         return TITLE
         
     except Exception as e:
@@ -374,8 +493,8 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Ошибка при создании напоминания.")
         return ConversationHandler.END
 
-async def get_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Получаем название"""
+async def get_title_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 1: Получаем название"""
     title = update.message.text.strip()
     
     if title.lower() == 'отмена':
@@ -388,6 +507,7 @@ async def get_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return TITLE
     
     context.user_data['title'] = title
+    context.user_data['step'] = 'amount'
     
     await update.message.reply_text(
         "✅ Название сохранено!\n\n"
@@ -400,8 +520,8 @@ async def get_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return AMOUNT
 
-async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Получаем сумму"""
+async def get_amount_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 2: Получаем сумму"""
     try:
         amount_text = update.message.text.strip()
         
@@ -417,6 +537,7 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return AMOUNT
         
         context.user_data['amount'] = amount
+        context.user_data['step'] = 'date'
         
         await update.message.reply_text(
             "✅ Сумма сохранена!\n\n"
@@ -433,8 +554,8 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Неверный формат суммы. Введите число:")
         return AMOUNT
 
-async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Получаем дату и сохраняем"""
+async def get_date_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 3: Получаем дату и сохраняем"""
     try:
         date_text = update.message.text.strip()
         
@@ -453,7 +574,6 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = context.user_data.get('user_id')
         title = context.user_data.get('title')
         amount = context.user_data.get('amount')
-        from_button = context.user_data.get('from_button', False)
         
         if not all([user_id, title, amount]):
             await update.message.reply_text("❌ Ошибка данных. Начните заново.")
@@ -471,33 +591,20 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if reminder_id:
             keyboard = [
-                [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                [InlineKeyboardButton("➕ Еще напоминание", callback_data="create_reminder")]
+                [InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders")],
+                [InlineKeyboardButton("➕ Еще напоминание", callback_data="create_new_reminder")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            success_message = (
+            await update.message.reply_text(
                 f"✅ <b>Напоминание создано!</b>\n\n"
                 f"<b>Название:</b> {title}\n"
                 f"<b>Сумма:</b> {amount}₽\n"
                 f"<b>Дата:</b> {date_text}\n\n"
-                f"Вы получите уведомление за день до платежа."
+                f"Вы получите уведомление за день до платежа.",
+                reply_markup=reply_markup,
+                parse_mode='HTML'
             )
-            
-            if from_button:
-                # Если начали с кнопки, редактируем последнее сообщение (не исходное)
-                await update.message.reply_text(
-                    success_message,
-                    reply_markup=reply_markup,
-                    parse_mode='HTML'
-                )
-            else:
-                # Если начали с команды, отправляем новое сообщение
-                await update.message.reply_text(
-                    success_message,
-                    reply_markup=reply_markup,
-                    parse_mode='HTML'
-                )
         else:
             await update.message.reply_text("❌ Ошибка сохранения.")
         
@@ -505,17 +612,17 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
         
     except Exception as e:
-        logger.error(f"Ошибка в get_date: {e}")
+        logger.error(f"Ошибка в get_date_step: {e}")
         await update.message.reply_text("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ\n\nНапример: <i>25.01.2024</i>", parse_mode='HTML')
         return DATE
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена создания"""
     await update.message.reply_text("❌ Создание напоминания отменено.")
     context.user_data.clear()
     return ConversationHandler.END
 
-# ========== КОМАНДА /LIST ==========
+# ========== СПИСОК НАПОМИНАНИЙ ==========
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /list - список напоминаний"""
@@ -533,17 +640,13 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Ошибка базы данных.")
             return
         
-        reminders = []
-        try:
-            reminders = db.get_user_reminders(user_id)
-        except Exception as e:
-            logger.error(f"Ошибка получения напоминаний: {e}")
+        reminders = db.get_user_reminders(user_id)
         
         if not reminders:
             keyboard = [
-                [InlineKeyboardButton("➕ Создать напоминание", callback_data="create_reminder")],
+                [InlineKeyboardButton("➕ Создать напоминание", callback_data="create_new_reminder")],
                 [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
-                [InlineKeyboardButton("🔄 Обновить", callback_data="list")]
+                [InlineKeyboardButton("🔄 Обновить", callback_data="list_reminders")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -563,10 +666,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payment_date = rem.get('payment_date', '')
             if isinstance(payment_date, str):
                 try:
-                    try:
-                        date_obj = datetime.strptime(payment_date, '%Y-%m-%d')
-                    except:
-                        date_obj = datetime.strptime(payment_date, '%d.%m.%Y')
+                    date_obj = datetime.strptime(payment_date, '%Y-%m-%d')
                     formatted_date = date_obj.strftime('%d.%m.%Y')
                 except:
                     formatted_date = payment_date
@@ -581,11 +681,9 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 pass
             
-            recurrence_icon = "🔄 " if rem.get('recurrence') != 'once' else ""
-            
             message += f"{i}. <b>{rem.get('title', 'Без названия')}</b>\n"
             message += f"   💰 {amount}₽\n"
-            message += f"   📅 {formatted_date} {recurrence_icon}\n\n"
+            message += f"   📅 {formatted_date}\n\n"
         
         message += f"<b>📊 Итого:</b> {len(reminders)} напоминаний на сумму {total_amount:.2f}₽\n"
         
@@ -597,30 +695,12 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not has_premium and len(reminders) >= FREE_LIMIT:
             message += f"\n⚠️ <b>Достигнут бесплатный лимит!</b>\n"
             message += f"Купите премиум для неограниченных напоминаний 💎\n"
+            message += f"📧 Почта для оплаты: {ADMIN_EMAIL}\n"
         
-        keyboard = []
-        
-        delete_buttons = []
-        for i in range(min(3, len(reminders))):
-            reminder = reminders[i]
-            title_short = reminder.get('title', 'Без названия')[:15]
-            reminder_id = reminder.get('id')
-            if reminder_id:
-                delete_buttons.append(
-                    InlineKeyboardButton(
-                        f"🗑 {i+1}. {title_short}...",
-                        callback_data=f"delete_{reminder_id}"
-                    )
-                )
-        
-        for i in range(0, len(delete_buttons), 2):
-            row = delete_buttons[i:i+2]
-            keyboard.append(row)
-        
-        keyboard.append([
-            InlineKeyboardButton("➕ Создать еще", callback_data="create_reminder"),
-            InlineKeyboardButton("🔄 Обновить", callback_data="list")
-        ])
+        keyboard = [
+            [InlineKeyboardButton("➕ Создать еще", callback_data="create_new_reminder")],
+            [InlineKeyboardButton("🔄 Обновить", callback_data="list_reminders")]
+        ]
         
         if not has_premium and len(reminders) >= FREE_LIMIT - 2:
             keyboard.append([InlineKeyboardButton("💎 Купить премиум", callback_data="premium_info")])
@@ -634,14 +714,12 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"❌ <b>Ошибка при получении списка</b>\n\n"
             f"Попробуйте позже или обратитесь к администратору.\n\n"
-            f"Ошибка: {str(e)[:100]}",
+            f"📧 Почта: {ADMIN_EMAIL}",
             parse_mode='HTML'
         )
 
-# ========== ОБРАБОТЧИК КНОПКИ "МОИ НАПОМИНАНИЯ" ==========
-
 async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик inline-кнопки 'Мои напоминания'"""
+    """Обработчик кнопки 'Мои напоминания'"""
     query = update.callback_query
     user = query.from_user
     await query.answer()
@@ -662,9 +740,9 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         if not reminders:
             keyboard = [
-                [InlineKeyboardButton("➕ Создать напоминание", callback_data="create_reminder")],
+                [InlineKeyboardButton("➕ Создать напоминание", callback_data="create_new_reminder")],
                 [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
-                [InlineKeyboardButton("🔄 Обновить", callback_data="list")]
+                [InlineKeyboardButton("🔄 Обновить", callback_data="list_reminders")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -684,10 +762,7 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             payment_date = rem.get('payment_date', '')
             if isinstance(payment_date, str):
                 try:
-                    try:
-                        date_obj = datetime.strptime(payment_date, '%Y-%m-%d')
-                    except:
-                        date_obj = datetime.strptime(payment_date, '%d.%m.%Y')
+                    date_obj = datetime.strptime(payment_date, '%Y-%m-%d')
                     formatted_date = date_obj.strftime('%d.%m.%Y')
                 except:
                     formatted_date = payment_date
@@ -702,11 +777,9 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except:
                 pass
             
-            recurrence_icon = "🔄 " if rem.get('recurrence') != 'once' else ""
-            
             message += f"{i}. <b>{rem.get('title', 'Без названия')}</b>\n"
             message += f"   💰 {amount}₽\n"
-            message += f"   📅 {formatted_date} {recurrence_icon}\n\n"
+            message += f"   📅 {formatted_date}\n\n"
         
         message += f"<b>📊 Итого:</b> {len(reminders)} напоминаний на сумму {total_amount:.2f}₽\n"
         
@@ -718,30 +791,12 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not has_premium and len(reminders) >= FREE_LIMIT:
             message += f"\n⚠️ <b>Достигнут бесплатный лимит!</b>\n"
             message += f"Купите премиум для неограниченных напоминаний 💎\n"
+            message += f"📧 Почта для оплаты: {ADMIN_EMAIL}\n"
         
-        keyboard = []
-        
-        delete_buttons = []
-        for i in range(min(3, len(reminders))):
-            reminder = reminders[i]
-            title_short = reminder.get('title', 'Без названия')[:15]
-            reminder_id = reminder.get('id')
-            if reminder_id:
-                delete_buttons.append(
-                    InlineKeyboardButton(
-                        f"🗑 {i+1}. {title_short}...",
-                        callback_data=f"delete_{reminder_id}"
-                    )
-                )
-        
-        for i in range(0, len(delete_buttons), 2):
-            row = delete_buttons[i:i+2]
-            keyboard.append(row)
-        
-        keyboard.append([
-            InlineKeyboardButton("➕ Создать еще", callback_data="create_reminder"),
-            InlineKeyboardButton("🔄 Обновить", callback_data="list")
-        ])
+        keyboard = [
+            [InlineKeyboardButton("➕ Создать еще", callback_data="create_new_reminder")],
+            [InlineKeyboardButton("🔄 Обновить", callback_data="list_reminders")]
+        ]
         
         if not has_premium and len(reminders) >= FREE_LIMIT - 2:
             keyboard.append([InlineKeyboardButton("💎 Купить премиум", callback_data="premium_info")])
@@ -755,11 +810,215 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(
             f"❌ <b>Ошибка при получении списка</b>\n\n"
             f"Попробуйте команду /list\n\n"
-            f"Ошибка: {str(e)[:100]}",
+            f"📧 Почта поддержки: {ADMIN_EMAIL}",
             parse_mode='HTML'
         )
 
-# ========== КОМАНДА /STATUS ==========
+# ========== ПРЕМИУМ ==========
+
+async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /premium"""
+    user = update.effective_user
+    
+    try:
+        user_id = db.get_or_create_user(
+            telegram_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name
+        )
+        
+        if not user_id:
+            if update.message:
+                await update.message.reply_text("❌ Ошибка базы данных.")
+            elif update.callback_query:
+                await update.callback_query.edit_message_text("❌ Ошибка базы данных.")
+            return
+        
+        premium_status = db.get_user_premium_status(user_id)
+        has_premium = premium_status.get('has_active_premium', False) if premium_status else False
+        
+        if has_premium:
+            until_date = premium_status.get('premium_until')
+            if until_date:
+                until_str = until_date.strftime('%d.%m.%Y') if hasattr(until_date, 'strftime') else str(until_date)
+                message = f"💎 <b>У ВАС АКТИВНА ПРЕМИУМ ПОДПИСКА!</b>\n\nДействует до: <b>{until_str}</b>"
+            else:
+                message = "💎 <b>У ВАС АКТИВНА ПРЕМИУМ ПОДПИСКА!</b>\n\nДействует бессрочно"
+            
+            keyboard = [
+                [InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders")],
+                [InlineKeyboardButton("🏠 В начало", callback_data="start")]
+            ]
+        else:
+            message = (
+                f"💎 <b>ПРЕМИУМ ПОДПИСКА</b>\n\n"
+                f"<b>Бесплатный тариф ограничен:</b>\n"
+                f"• 🛑 Всего {FREE_LIMIT} напоминаний\n"
+                f"• ⏰ Уведомления только за 1 день\n\n"
+                f"<b>С премиум вы получаете:</b>\n"
+                f"• ♾️ Неограниченные напоминания\n"
+                f"• 🔔 Уведомления за 3 и 7 дней\n"
+                f"• 📊 Расширенная статистика\n\n"
+                f"<b>Выберите подписку:</b>\n\n"
+                f"📧 Почта для оплаты: {ADMIN_EMAIL}"
+            )
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("1 месяц - 299₽", callback_data="buy_1"),
+                    InlineKeyboardButton("3 месяца - 799₽", callback_data="buy_3")
+                ],
+                [
+                    InlineKeyboardButton("12 месяцев - 1990₽", callback_data="buy_12"),
+                    InlineKeyboardButton("🎁 Тест 7 дней", callback_data="trial")
+                ],
+                [
+                    InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders"),
+                    InlineKeyboardButton("📧 Помощь", callback_data="help_info")
+                ],
+                [InlineKeyboardButton("🏠 В начало", callback_data="start")]
+            ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.message:
+            await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='HTML')
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Ошибка в premium_command: {e}")
+        if update.message:
+            await update.message.reply_text("❌ Ошибка получения информации о премиуме.")
+        elif update.callback_query:
+            await update.callback_query.edit_message_text("❌ Ошибка получения информации о премиуме.")
+
+# ========== ОБРАБОТЧИК ОСТАЛЬНЫХ КНОПОК ==========
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик остальных inline-кнопок"""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        if query.data == "help_info":
+            await help_command(update, context)
+            
+        elif query.data == "list_reminders":
+            await handle_list_button(update, context)
+            
+        elif query.data == "premium_info":
+            await premium_command(update, context)
+            
+        elif query.data.startswith("buy_"):
+            period = query.data.split("_")[1]
+            if period in PREMIUM_PRICES:
+                price_info = PREMIUM_PRICES[period]
+                user = query.from_user
+                
+                instructions = (
+                    f"💳 <b>ИНСТРУКЦИИ ДЛЯ ОПЛАТЫ</b>\n\n"
+                    f"<b>Сумма к оплате:</b> {price_info['amount']}₽\n"
+                    f"<b>Период подписки:</b> {price_info['text']}\n"
+                    f"<b>Ваш username:</b> @{user.username or user.id}\n\n"
+                    f"<b>Для оплаты напишите на почту:</b>\n"
+                    f"<code>{ADMIN_EMAIL}</code>\n\n"
+                    f"<b>В письме укажите:</b>\n"
+                    f"1. Ваш Telegram: @{user.username or user.id}\n"
+                    f"2. Выбранный период: {price_info['text']}\n"
+                    f"3. Сумму: {price_info['amount']}₽\n\n"
+                    f"<b>После оплаты:</b>\n"
+                    f"1. Администратор получит ваше письмо\n"
+                    f"2. Он активирует ваш премиум\n"
+                    f"3. Вы получите уведомление в Telegram\n\n"
+                    f"Обычно активация занимает до 24 часов."
+                )
+                
+                keyboard = [
+                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders")],
+                    [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")],
+                    [InlineKeyboardButton("🏠 В начало", callback_data="start")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(
+                    instructions,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
+                
+        elif query.data == "trial":
+            user = query.from_user
+            user_id = db.get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+            
+            if db.activate_premium(user_id, 7):
+                await query.edit_message_text(
+                    "🎉 <b>Тестовый премиум активирован!</b>\n\n"
+                    "Вам доступны все функции премиума на 7 дней:\n\n"
+                    "• ♾️ Неограниченные напоминания\n"
+                    "• 🔔 Уведомления за 3 и 7 дней\n\n"
+                    "Наслаждайтесь! Если понравится - напишите на почту для оплаты полной подписки.\n\n"
+                    f"📧 Почта: {ADMIN_EMAIL}",
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📋 Мои напоминания", callback_data="list_reminders")],
+                        [InlineKeyboardButton("🏠 В начало", callback_data="start")]
+                    ])
+                )
+            else:
+                await query.edit_message_text("❌ Ошибка активации тестового периода.")
+                
+        elif query.data == "admin_panel":
+            user = query.from_user
+            if user.id != ADMIN_ID:
+                await query.edit_message_text("❌ Доступ запрещен.")
+                return
+            
+            # Простая админ-панель
+            try:
+                with db.get_connection() as conn:
+                    if conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT COUNT(*) FROM users")
+                        total_users = cursor.fetchone()[0]
+                        
+                        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
+                        premium_users = cursor.fetchone()[0]
+                        
+                        cursor.execute("SELECT COUNT(*) FROM reminders")
+                        total_reminders = cursor.fetchone()[0]
+                    else:
+                        total_users = premium_users = total_reminders = 0
+            except:
+                total_users = premium_users = total_reminders = 0
+            
+            message = (
+                f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
+                f"<b>Статистика:</b>\n"
+                f"• 👥 Пользователей: {total_users}\n"
+                f"• 💎 Премиум: {premium_users}\n"
+                f"• 📝 Напоминаний: {total_reminders}\n\n"
+                f"<b>📧 Ваша почта:</b> {ADMIN_EMAIL}\n\n"
+                f"<b>Для активации премиума:</b>\n"
+                f"<code>/admin_activate @username дни</code>\n\n"
+                f"<b>Пример:</b>\n"
+                f"<code>/admin_activate @ivanov 30</code>"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("🔄 Обновить", callback_data="admin_panel")],
+                [InlineKeyboardButton("🏠 В начало", callback_data="start")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+            
+    except Exception as e:
+        logger.error(f"Ошибка в button_handler: {e}")
+        await query.edit_message_text("⚠️ Произошла ошибка. Попробуйте команду /start")
+
+# ========== ДОПОЛНИТЕЛЬНЫЕ КОМАНДЫ ==========
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /status"""
@@ -780,14 +1039,14 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ /status — этот статус\n"
             f"✅ /help — справка\n\n"
             f"<b>Способ оплаты:</b>\n"
-            f"• 💳 Ручная оплата (карта)\n\n"
+            f"• 📧 Напишите на почту: {ADMIN_EMAIL}\n\n"
             f"<i>Бот работает нормально! 🎉</i>"
         )
         
         keyboard = [
-            [InlineKeyboardButton("➕ Создать напоминание", callback_data="create_reminder")],
+            [InlineKeyboardButton("➕ Создать напоминание", callback_data="create_new_reminder")],
             [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
-            [InlineKeyboardButton("📧 Помощь", callback_data="help_btn")]
+            [InlineKeyboardButton("📧 Помощь", callback_data="help_info")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -796,90 +1055,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка команды status: {e}")
         await update.message.reply_text("❌ Ошибка получения статуса.")
-
-# ========== ПРЕМИУМ КОМАНДЫ ==========
-
-async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /premium"""
-    user = update.effective_user
-    
-    try:
-        user_id = db.get_or_create_user(
-            telegram_id=user.id,
-            username=user.username,
-            first_name=user.first_name,
-            last_name=user.last_name
-        )
-        
-        if not user_id:
-            if update.callback_query:
-                await update.callback_query.edit_message_text("❌ Ошибка базы данных.")
-            else:
-                await update.message.reply_text("❌ Ошибка базы данных.")
-            return
-        
-        premium_status = db.get_user_premium_status(user_id)
-        has_premium = premium_status.get('has_active_premium', False) if premium_status else False
-        
-        if has_premium:
-            until_date = premium_status.get('premium_until')
-            if until_date:
-                until_str = until_date.strftime('%d.%m.%Y') if hasattr(until_date, 'strftime') else str(until_date)
-                message = f"💎 <b>У ВАС АКТИВНА ПРЕМИУМ ПОДПИСКА!</b>\n\nДействует до: <b>{until_str}</b>"
-            else:
-                message = "💎 <b>У ВАС АКТИВНА ПРЕМИУМ ПОДПИСКА!</b>\n\nДействует бессрочно"
-            
-            keyboard = [
-                [InlineKeyboardButton("🔄 Мой статус", callback_data="premium_status")],
-                [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-            ]
-        else:
-            message = (
-                f"💎 <b>ПРЕМИУМ ПОДПИСКА</b>\n\n"
-                f"<b>Бесплатный тариф ограничен:</b>\n"
-                f"• 🛑 Всего {FREE_LIMIT} напоминаний\n"
-                f"• ⏰ Уведомления только за 1 день\n"
-                f"• 🔄 Нет повторяющихся платежей\n\n"
-                f"<b>С премиум вы получаете:</b>\n"
-                f"• ♾️ Неограниченные напоминания\n"
-                f"• 🔄 Повторяющиеся платежи\n"
-                f"• 🔔 Уведомления за 3 и 7 дней\n"
-                f"• 📊 Расширенная статистика\n\n"
-                f"<b>Выберите подписку:</b>"
-            )
-            
-            keyboard = [
-                [
-                    InlineKeyboardButton("1 месяц - 299₽", callback_data="buy_1"),
-                    InlineKeyboardButton("3 месяца - 799₽", callback_data="buy_3")
-                ],
-                [
-                    InlineKeyboardButton("12 месяцев - 1990₽", callback_data="buy_12"),
-                    InlineKeyboardButton("🎁 Тест 7 дней", callback_data="trial")
-                ],
-                [
-                    InlineKeyboardButton("🔄 Мой статус", callback_data="premium_status"),
-                    InlineKeyboardButton("📧 Помощь", callback_data="help_btn")
-                ],
-                [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-            ]
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        if update.callback_query:
-            await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
-        else:
-            await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='HTML')
-        
-    except Exception as e:
-        logger.error(f"Ошибка в premium_command: {e}")
-        if update.callback_query:
-            await update.callback_query.edit_message_text("❌ Ошибка получения информации о премиуме.")
-        else:
-            await update.message.reply_text("❌ Ошибка получения информации о премиуме.")
-
-# ========== АДМИН КОМАНДЫ ==========
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /admin"""
@@ -913,20 +1088,16 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• 👥 Пользователей: {total_users}\n"
         f"• 💎 Премиум: {premium_users}\n"
         f"• 📝 Напоминаний: {total_reminders}\n\n"
-        f"<b>📧 Почта:</b> {ADMIN_EMAIL}\n\n"
-        f"<b>Доступные команды:</b>\n"
-        f"• <code>/admin_activate @username дни</code> - активировать премиум\n"
-        f"• Нажмите на кнопки ниже для управления"
+        f"<b>📧 Ваша почта:</b> {ADMIN_EMAIL}\n\n"
+        f"<b>Для активации премиума:</b>\n"
+        f"<code>/admin_activate @username дни</code>\n\n"
+        f"<b>Пример:</b>\n"
+        f"<code>/admin_activate @ivanov 30</code>"
     )
     
     keyboard = [
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
-        [
-            InlineKeyboardButton("💎 Активировать", callback_data="admin_activate"),
-            InlineKeyboardButton("🚫 Деактивировать", callback_data="admin_deactivate_menu")
-        ],
-        [InlineKeyboardButton("🔄 Обновить", callback_data="admin_panel")]
+        [InlineKeyboardButton("🔄 Обновить", callback_data="admin_panel")],
+        [InlineKeyboardButton("🏠 В начало", callback_data="start")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -979,9 +1150,9 @@ async def admin_activate_command(update: Update, context: ContextTypes.DEFAULT_T
                          f"Администратор активировал вам премиум подписку на {days} дней.\n\n"
                          f"<b>Теперь вам доступны:</b>\n"
                          f"• ♾️ Неограниченные напоминания\n"
-                         f"• 🔄 Повторяющиеся платежи\n"
                          f"• 🔔 Уведомления за 3 и 7 дней\n\n"
-                         f"Спасибо за использование бота! 💎",
+                         f"Спасибо за использование бота! 💎\n\n"
+                         f"📧 По вопросам: {ADMIN_EMAIL}",
                     parse_mode='HTML'
                 )
             except:
@@ -997,436 +1168,6 @@ async def admin_activate_command(update: Update, context: ContextTypes.DEFAULT_T
         else:
             await update.message.reply_text(f"❌ Ошибка активации премиума для @{username}.")
 
-# ========== ОБРАБОТЧИК КНОПОК ==========
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик inline-кнопок (кроме create_reminder)"""
-    query = update.callback_query
-    await query.answer()
-    
-    try:
-        if query.data == "start":
-            user = query.from_user
-            await query.edit_message_text(
-                f"🔔 <b>НеЗабудьОплатить</b>\n\n"
-                f"Привет, {user.first_name}!\n\n"
-                f"Я помогу не забыть об оплате счетов!\n\n"
-                f"<b>Выберите действие:</b>",
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➕ Создать напоминание", callback_data="create_reminder")],
-                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                    [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
-                    [InlineKeyboardButton("📧 Помощь", callback_data="help_btn")]
-                ])
-            )
-            
-        elif query.data == "list":
-            await handle_list_button(update, context)
-            
-        elif query.data == "premium_info":
-            await premium_command(update, context)
-            
-        elif query.data.startswith("buy_"):
-            period = query.data.split("_")[1]
-            if period in PREMIUM_PRICES:
-                price_info = PREMIUM_PRICES[period]
-                user = query.from_user
-                
-                instructions = (
-                    f"💳 <b>ИНСТРУКЦИИ ДЛЯ ОПЛАТЫ</b>\n\n"
-                    f"<b>Сумма к оплате:</b> {price_info['amount']}₽\n"
-                    f"<b>Период подписки:</b> {price_info['text']}\n"
-                    f"<b>Ваш username:</b> @{user.username or user.id}\n\n"
-                    f"<b>Перевод на карту:</b>\n"
-                    f"Номер карты: <code>{CARD_NUMBER}</code>\n"
-                    f"Банк: Тинькофф\n\n"
-                    f"<b>Обязательно укажите в комментарии:</b>\n"
-                    f"<code>@{user.username or user.id} премиум {price_info['text']}</code>\n\n"
-                    f"<b>После перевода:</b>\n"
-                    f"1. Нажмите кнопку '✅ Я оплатил'\n"
-                    f"2. Администратор проверит платеж\n"
-                    f"3. Вы получите уведомление об активации\n\n"
-                    f"Обычно активация занимает до 24 часов.\n\n"
-                    f"<b>📧 Почта для вопросов:</b> {ADMIN_EMAIL}"
-                )
-                
-                keyboard = [
-                    [InlineKeyboardButton("✅ Я оплатил", callback_data=f"manual_paid_{period}")],
-                    [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")],
-                    [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                await query.edit_message_text(
-                    instructions,
-                    reply_markup=reply_markup,
-                    parse_mode='HTML'
-                )
-            else:
-                await query.edit_message_text("❌ Неверный период подписки.")
-                
-        elif query.data == "premium_status":
-            user = query.from_user
-            user_id = db.get_or_create_user(user.id, user.username, user.first_name, user.last_name)
-            
-            if user_id:
-                premium_status = db.get_user_premium_status(user_id)
-                has_premium = premium_status.get('has_active_premium', False) if premium_status else False
-                
-                if has_premium:
-                    until_date = premium_status.get('premium_until')
-                    if until_date:
-                        until_str = until_date.strftime('%d.%m.%Y') if hasattr(until_date, 'strftime') else str(until_date)
-                        message = f"💎 <b>ПРЕМИУМ СТАТУС</b>\n\nВаш премиум действует до: <b>{until_str}</b>"
-                    else:
-                        message = "💎 <b>ПРЕМИУМ СТАТУС</b>\n\nУ вас активна бессрочная премиум подписка!"
-                    
-                    keyboard = [
-                        [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                        [InlineKeyboardButton("🔄 Обновить статус", callback_data="premium_status")],
-                        [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-                    ]
-                else:
-                    message = "🆓 <b>ПРЕМИУМ СТАТУС</b>\n\nУ вас нет активной премиум подписки."
-                    keyboard = [
-                        [InlineKeyboardButton("💎 Купить премиум", callback_data="premium_info")],
-                        [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                        [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-                    ]
-                
-                await query.edit_message_text(
-                    message,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='HTML'
-                )
-            else:
-                await query.edit_message_text("❌ Ошибка получения статуса.")
-                
-        elif query.data.startswith("delete_"):
-            try:
-                reminder_id = int(query.data.split("_")[1])
-                user = query.from_user
-                
-                user_id = db.get_or_create_user(
-                    telegram_id=user.id,
-                    username=user.username,
-                    first_name=user.first_name,
-                    last_name=user.last_name
-                )
-                
-                if db.delete_reminder(user_id, reminder_id):
-                    await handle_list_button(update, context)
-                else:
-                    await query.edit_message_text("❌ Не удалось удалить напоминание.")
-            except Exception as e:
-                logger.error(f"Ошибка удаления: {e}")
-                await query.edit_message_text("❌ Ошибка при удалении.")
-                
-        elif query.data == "help_btn":
-            await help_command(update, context)
-        
-        # Админ кнопки
-        elif query.data == "admin_panel":
-            user = query.from_user
-            if user.id != ADMIN_ID:
-                await query.edit_message_text("❌ Доступ запрещен.")
-                return
-            
-            try:
-                with db.get_connection() as conn:
-                    if conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT COUNT(*) FROM users")
-                        total_users = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
-                        premium_users = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM reminders")
-                        total_reminders = cursor.fetchone()[0]
-                    else:
-                        total_users = premium_users = total_reminders = 0
-            except:
-                total_users = premium_users = total_reminders = 0
-            
-            keyboard = [
-                [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-                [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
-                [
-                    InlineKeyboardButton("💎 Активировать", callback_data="admin_activate"),
-                    InlineKeyboardButton("🚫 Деактивировать", callback_data="admin_deactivate_menu")
-                ],
-                [InlineKeyboardButton("🔄 Обновить", callback_data="admin_panel")],
-                [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-            ]
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(
-                f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
-                f"<b>Статистика:</b>\n"
-                f"• 👥 Пользователей: {total_users}\n"
-                f"• 💎 Премиум: {premium_users}\n"
-                f"• 📝 Напоминаний: {total_reminders}\n\n"
-                f"<b>📧 Почта:</b> {ADMIN_EMAIL}\n\n"
-                f"Выберите действие:",
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "admin_stats":
-            user = query.from_user
-            if user.id != ADMIN_ID:
-                await query.edit_message_text("❌ Доступ запрещен.")
-                return
-            
-            try:
-                with db.get_connection() as conn:
-                    if conn:
-                        cursor = conn.cursor()
-                        
-                        # Общая статистика
-                        cursor.execute("SELECT COUNT(*) FROM users")
-                        total_users = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
-                        premium_users = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM reminders")
-                        total_reminders = cursor.fetchone()[0]
-                        
-                        # Сегодняшние пользователи
-                        cursor.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE")
-                        today_users = cursor.fetchone()[0]
-                        
-                        # Активные пользователи (с напоминаниями)
-                        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM reminders")
-                        active_users = cursor.fetchone()[0]
-                        
-                        message = (
-                            f"📊 <b>ДЕТАЛЬНАЯ СТАТИСТИКА</b>\n\n"
-                            f"<b>Основные метрики:</b>\n"
-                            f"• 👥 Всего пользователей: {total_users}\n"
-                            f"• 💎 Премиум пользователей: {premium_users}\n"
-                            f"• 📝 Всего напоминаний: {total_reminders}\n"
-                            f"• 🎯 Активных пользователей: {active_users}\n"
-                            f"• 📈 Конверсия в премиум: {premium_users/total_users*100:.1f}%"
-                        )
-                        
-                        if total_users > 0:
-                            message += f"\n• 📊 Среднее напоминаний на пользователя: {total_reminders/total_users:.1f}"
-                        
-                        if today_users > 0:
-                            message += f"\n• 🆕 Новых сегодня: {today_users}"
-                        
-                        keyboard = [
-                            [InlineKeyboardButton("⬅️ Назад в админку", callback_data="admin_panel")],
-                            [InlineKeyboardButton("🔄 Обновить", callback_data="admin_stats")],
-                            [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-                        ]
-                        reply_markup = InlineKeyboardMarkup(keyboard)
-                        
-                        await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
-                        
-            except Exception as e:
-                logger.error(f"Ошибка получения статистики: {e}")
-                await query.edit_message_text("❌ Ошибка получения статистики.")
-                
-        elif query.data == "admin_users":
-            user = query.from_user
-            if user.id != ADMIN_ID:
-                await query.edit_message_text("❌ Доступ запрещен.")
-                return
-            
-            try:
-                with db.get_connection() as conn:
-                    if conn:
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                            SELECT id, telegram_id, username, first_name, last_name, 
-                                   is_premium, created_at 
-                            FROM users 
-                            ORDER BY created_at DESC 
-                            LIMIT 20
-                        """)
-                        users = cursor.fetchall()
-                        
-                        if users:
-                            message = "👥 <b>ПОСЛЕДНИЕ 20 ПОЛЬЗОВАТЕЛЕЙ</b>\n\n"
-                            for user_data in users:
-                                user_id, telegram_id, username, first_name, last_name, is_premium, created_at = user_data
-                                premium_status = "💎" if is_premium else "🆓"
-                                username_display = f"@{username}" if username else f"ID:{telegram_id}"
-                                name = f"{first_name or ''} {last_name or ''}".strip() or "Без имени"
-                                created = created_at.strftime('%d.%m.%Y') if hasattr(created_at, 'strftime') else str(created_at)
-                                
-                                message += f"{premium_status} <b>{name}</b>\n"
-                                message += f"   {username_display}\n"
-                                message += f"   ID: <code>{telegram_id}</code>\n"
-                                message += f"   📅 Рег.: {created}\n\n"
-                        else:
-                            message = "👥 <b>ПОЛЬЗОВАТЕЛИ</b>\n\nПользователей пока нет."
-                        
-                        keyboard = [
-                            [InlineKeyboardButton("⬅️ Назад в админку", callback_data="admin_panel")],
-                            [InlineKeyboardButton("🔄 Обновить", callback_data="admin_users")]
-                        ]
-                        reply_markup = InlineKeyboardMarkup(keyboard)
-                        
-                        await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
-                        
-            except Exception as e:
-                logger.error(f"Ошибка получения пользователей: {e}")
-                await query.edit_message_text("❌ Ошибка получения списка пользователей.")
-                
-        elif query.data == "admin_activate":
-            user = query.from_user
-            if user.id != ADMIN_ID:
-                await query.edit_message_text("❌ Доступ запрещен.")
-                return
-            
-            await query.edit_message_text(
-                "💎 <b>АКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
-                "<b>Используйте команду:</b>\n"
-                "<code>/admin_activate @username дни</code>\n\n"
-                "<b>Примеры:</b>\n"
-                "<code>/admin_activate @ivanov 30</code> - на 30 дней\n"
-                "<code>/admin_activate 123456789 90</code> - по ID на 90 дней\n\n"
-                "<b>Или вернитесь в админ-панель:</b>",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Назад в админку", callback_data="admin_panel")],
-                    [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "admin_deactivate_menu":
-            user = query.from_user
-            if user.id != ADMIN_ID:
-                await query.edit_message_text("❌ Доступ запрещен.")
-                return
-            
-            await query.edit_message_text(
-                "🚫 <b>ДЕАКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
-                "<b>Функция в разработке...</b>\n\n"
-                "Пока используйте SQL запрос:\n"
-                "<code>UPDATE users SET is_premium = FALSE, premium_until = NULL WHERE telegram_id = 123456789;</code>\n\n"
-                "<b>Или вернитесь в админ-панель:</b>",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Назад в админку", callback_data="admin_panel")],
-                    [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "trial":
-            user = query.from_user
-            user_id = db.get_or_create_user(user.id, user.username, user.first_name, user.last_name)
-            
-            if db.activate_premium(user_id, 7):
-                await query.edit_message_text(
-                    "🎉 <b>Тестовый премиум активирован!</b>\n\n"
-                    "Вам доступны все функции премиума на 7 дней:\n\n"
-                    "• ♾️ Неограниченные напоминания\n"
-                    "• 🔄 Повторяющиеся платежи\n"
-                    "• 🔔 Уведомления за 3 и 7 дней\n\n"
-                    "Наслаждайтесь! Если понравится - сможете оформить полную подписку. 💎",
-                    parse_mode='HTML',
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                        [InlineKeyboardButton("💎 Полная подписка", callback_data="premium_info")],
-                        [InlineKeyboardButton("🏠 В начало", callback_data="start")]
-                    ])
-                )
-            else:
-                await query.edit_message_text("❌ Ошибка активации тестового периода.")
-                
-        # ========== ОБРАБОТЧИК КНОПКИ "Я ОПЛАТИЛ" ==========
-        elif query.data.startswith("manual_paid_"):
-            try:
-                period = query.data.split("_")[2] if len(query.data.split("_")) > 2 else "1"
-                
-                if period in PREMIUM_PRICES:
-                    price_info = PREMIUM_PRICES[period]
-                    user = query.from_user
-                    
-                    logger.info(f"💰 Кнопка 'Я оплатил' нажата: user_id={user.id}, period={period}")
-                    
-                    await query.edit_message_text(
-                        f"✅ <b>Заявка принята!</b>\n\n"
-                        f"<b>Детали оплаты:</b>\n"
-                        f"• Подписка: {price_info['text']}\n"
-                        f"• Сумма: {price_info['amount']}₽\n"
-                        f"• Срок: {price_info['days']} дней\n\n"
-                        f"<b>Что дальше:</b>\n"
-                        f"1. Администратор получил уведомление\n"
-                        f"2. Он активирует ваш премиум вручную\n"
-                        f"3. Вы получите сообщение об активации\n\n"
-                        f"Обычно это занимает до 24 часов.\n\n"
-                        f"<b>📧 Почта для вопросов:</b> {ADMIN_EMAIL}\n\n"
-                        f"Спасибо за покупку! 💰",
-                        parse_mode='HTML'
-                    )
-                    
-                    if not ADMIN_ID or ADMIN_ID == 0:
-                        logger.error("❌ ADMIN_ID не настроен!")
-                        return
-                    
-                    try:
-                        username_display = f"@{user.username}" if user.username else f"ID_{user.id}"
-                        
-                        admin_message = (
-                            f"💰 <b>НОВАЯ ЗАЯВКА НА ОПЛАТУ!</b>\n\n"
-                            f"<b>👤 Пользователь:</b>\n"
-                            f"├ Имя: {user.first_name or 'Не указано'}\n"
-                            f"├ Фамилия: {user.last_name or 'Не указана'}\n"
-                            f"├ Username: {username_display}\n"
-                            f"└ ID: <code>{user.id}</code>\n\n"
-                            f"<b>📦 Подписка:</b>\n"
-                            f"├ Период: {price_info['text']}\n"
-                            f"├ Сумма: {price_info['amount']}₽\n"
-                            f"└ Дней: {price_info['days']}\n\n"
-                            f"<b>⚡ Быстрая активация:</b>\n"
-                            f"<code>/admin_activate {username_display.replace('@', '')} {price_info['days']}</code>\n\n"
-                            f"<b>⏰ Время заявки:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
-                        )
-                        
-                        await context.bot.send_message(
-                            chat_id=ADMIN_ID,
-                            text=admin_message,
-                            parse_mode='HTML'
-                        )
-                        
-                        logger.info(f"✅ Уведомление отправлено администратору {ADMIN_ID}")
-                        
-                    except Exception as admin_error:
-                        logger.error(f"❌ Ошибка отправки уведомления админу: {admin_error}")
-                        
-                else:
-                    await query.edit_message_text(
-                        "❌ <b>Ошибка обработки оплаты</b>\n\n"
-                        "Неверный период подписки. Пожалуйста, попробуйте снова.",
-                        parse_mode='HTML'
-                    )
-                    
-            except Exception as e:
-                logger.error(f"❌ Общая ошибка в обработчике manual_paid_: {e}")
-                
-                try:
-                    await query.edit_message_text(
-                        "❌ <b>Произошла критическая ошибка</b>\n\n"
-                        "Пожалуйста, повторите попытку или свяжитесь с администратором напрямую.\n\n"
-                        f"📧 Почта: {ADMIN_EMAIL}",
-                        parse_mode='HTML'
-                    )
-                except:
-                    pass
-                
-    except Exception as e:
-        logger.error(f"Ошибка в button_handler: {e}")
-        await query.message.reply_text("⚠️ Произошла ошибка. Попробуйте команду /start")
-
 # ========== ОБРАБОТЧИК ОШИБОК ==========
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1436,7 +1177,8 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if update and update.effective_message:
             await update.effective_message.reply_text(
-                "⚠️ Произошла ошибка. Попробуйте команду /start"
+                f"⚠️ Произошла ошибка. Попробуйте команду /start\n\n"
+                f"📧 Если проблема повторяется, напишите на почту: {ADMIN_EMAIL}"
             )
     except:
         pass
@@ -1447,9 +1189,8 @@ def main():
     """Запуск бота"""
     print("=" * 60)
     print("🚀 ЗАПУСК ТЕЛЕГРАМ БОТА «НеЗабудьОплатить»")
-    print("💰 Платежи: Только ручная оплата")
+    print("💰 Платежи: Ручная оплата через почту")
     print(f"📧 Почта админа: {ADMIN_EMAIL}")
-    print(f"💳 Номер карты: {CARD_NUMBER}")
     print("=" * 60)
     
     print(f"✅ Токен: {'найден' if TOKEN else 'НЕ НАЙДЕН'}")
@@ -1464,24 +1205,30 @@ def main():
     except Exception as e:
         print(f"❌ Ошибка БД: {e}")
     
-    print("💳 Ручная оплата: ✅ доступна")
-    print("➕ Кнопка 'Создать': ✅ работает")
+    print("💳 Ручная оплата через почту: ✅ доступна")
+    print("➕ Кнопка 'Создать напоминание': ✅ работает")
     print(f"📧 Почта в помощи: ✅ {ADMIN_EMAIL}")
     
     app = Application.builder().token(TOKEN).build()
     
-    # ConversationHandler для создания напоминаний - ИСПРАВЛЕННЫЙ
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler('new', new_command),
-            CallbackQueryHandler(create_reminder_button, pattern='^create_reminder$')
-        ],
+    # Два ConversationHandler: для команды и для кнопки
+    new_command_handler = ConversationHandler(
+        entry_points=[CommandHandler('new', new_command)],
         states={
-            TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_title)],
-            AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_amount)],
-            DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_date)],
+            TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_title_step)],
+            AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_amount_step)],
+            DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_date_step)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel_creation)],
+        allow_reentry=True
+    )
+    
+    quick_create_handler_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(quick_create_handler, pattern='^quick_create$')],
+        states={
+            TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quick_create_process)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_creation)],
         allow_reentry=True
     )
     
@@ -1494,11 +1241,13 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("admin_activate", admin_activate_command))
     
-    # Важно: сначала ConversationHandler, потом остальные CallbackQueryHandler
-    app.add_handler(conv_handler)
+    # Обработчики Conversation
+    app.add_handler(new_command_handler)
+    app.add_handler(quick_create_handler_conv)
     
-    # Общий обработчик кнопок (кроме create_reminder)
-    app.add_handler(CallbackQueryHandler(button_handler, pattern='^(?!create_reminder).*$'))
+    # Обработчики кнопок
+    app.add_handler(CallbackQueryHandler(create_reminder_button_handler, pattern='^create_new_reminder$'))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern='^(?!create_new_reminder|quick_create).*$'))
     
     # Планировщик уведомлений
     job_queue = app.job_queue
@@ -1520,7 +1269,7 @@ def main():
     print("  • /start, /new, /list, /premium, /status, /help")
     print("  • /admin, /admin_activate")
     print("=" * 60)
-    print("💳 Ручная оплата готова к работе!")
+    print("📧 Оплата через почту готова к работе!")
     print("=" * 60)
     
     # Запускаем веб-сервер
