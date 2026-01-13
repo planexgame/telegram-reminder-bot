@@ -141,7 +141,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         message = (
             f"🔔 <b>НеЗабудьОплатить</b>\n\n"
-            f"Привет, {user.first_name}!\n\n"
+            f"Привет, {user.first_name}!\n\n как твои дела?🙂"
             f"<b>Ваша статистика:</b>\n"
             f"📊 Напоминаний: {reminders_count}/{limit_text}\n"
             f"💎 Статус: {premium_text}\n\n"
@@ -393,6 +393,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний\n"
                 "<b>Уведомления:</b> каждый день в 10:00 по Москве\n\n"
                 "<i>По вопросам обращайтесь к администратору</i>",
+                "<b>Почта Администратора: planexgame@gmail.com:</b>
                 reply_markup=reply_markup,
                 parse_mode='HTML'
             )
@@ -908,3 +909,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
