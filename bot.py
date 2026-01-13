@@ -1,4 +1,4 @@
-# bot.py - полный исправленный код с keep-alive (без ЮKassa)
+# bot.py - исправленный код с правильными кнопками
 import os
 import logging
 from datetime import datetime, timedelta, time
@@ -262,7 +262,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Создаем клавиатуру
         keyboard = [
             [
-                InlineKeyboardButton("➕ Создать напоминание", callback_data="create"),
+                InlineKeyboardButton("➕ Создать напоминание", callback_data="new_reminder"),
                 InlineKeyboardButton("📋 Мои напоминания", callback_data="list")
             ],
             [
@@ -355,7 +355,8 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if reminders_count >= FREE_LIMIT:
                 keyboard = [
                     [InlineKeyboardButton("💎 Купить премиум", callback_data="buy_premium")],
-                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")]
+                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
+                    [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
@@ -372,7 +373,8 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📝 <b>Создание напоминания</b>\n\n"
             "Шаг 1 из 3\n"
             "Введите <b>название платежа</b>:\n\n"
-            "Например: <i>Коммунальные услуги, Интернет, Кредит</i>",
+            "Например: <i>Коммунальные услуги, Интернет, Кредит</i>\n\n"
+            "Для отмены используйте команду /cancel",
             parse_mode='HTML'
         )
         
@@ -397,7 +399,8 @@ async def get_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Шаг 2 из 3\n"
         "Введите <b>сумму платежи</b> (в рублях):\n\n"
-        "Например: <i>4500</i> или <i>1250.50</i>",
+        "Например: <i>4500</i> или <i>1250.50</i>\n\n"
+        "Для отмены используйте команду /cancel",
         parse_mode='HTML'
     )
     
@@ -418,7 +421,8 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Шаг 3 из 3\n"
             "Введите <b>дату платежа</b> (ДД.ММ.ГГГГ):\n\n"
-            "Например: <i>25.01.2024</i>",
+            "Например: <i>25.01.2024</i>\n\n"
+            "Для отмены используйте команду /cancel",
             parse_mode='HTML'
         )
         
@@ -461,7 +465,8 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if reminder_id:
             keyboard = [
                 [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                [InlineKeyboardButton("➕ Еще напоминание", callback_data="create")]
+                [InlineKeyboardButton("➕ Еще напоминание", callback_data="new_reminder")],
+                [InlineKeyboardButton("🔙 Назад в меню", callback_data="start_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -487,7 +492,16 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена создания"""
-    await update.message.reply_text("❌ Создание напоминания отменено.")
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="start_menu")],
+        [InlineKeyboardButton("➕ Создать напоминание", callback_data="new_reminder")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "❌ Создание напоминания отменено.",
+        reply_markup=reply_markup
+    )
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -518,9 +532,9 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if not reminders:
             keyboard = [
-                [InlineKeyboardButton("➕ Создать напоминание", callback_data="create")],
+                [InlineKeyboardButton("➕ Создать напоминание", callback_data="new_reminder")],
                 [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
-                [InlineKeyboardButton("🔄 Обновить", callback_data="list")]
+                [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -602,8 +616,8 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Основные кнопки
         keyboard.append([
-            InlineKeyboardButton("➕ Создать еще", callback_data="create"),
-            InlineKeyboardButton("🔄 Обновить", callback_data="list")
+            InlineKeyboardButton("➕ Создать еще", callback_data="new_reminder"),
+            InlineKeyboardButton("🔙 Назад", callback_data="start_menu")
         ])
         
         # Если нет премиума и достигнут/почти достигнут лимит
@@ -649,9 +663,9 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         if not reminders:
             keyboard = [
-                [InlineKeyboardButton("➕ Создать напоминание", callback_data="create")],
+                [InlineKeyboardButton("➕ Создать напоминание", callback_data="new_reminder")],
                 [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
-                [InlineKeyboardButton("🔄 Обновить", callback_data="list")]
+                [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -733,8 +747,8 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         # Основные кнопки
         keyboard.append([
-            InlineKeyboardButton("➕ Создать еще", callback_data="create"),
-            InlineKeyboardButton("🔄 Обновить", callback_data="list")
+            InlineKeyboardButton("➕ Создать еще", callback_data="new_reminder"),
+            InlineKeyboardButton("🔙 Назад", callback_data="start_menu")
         ])
         
         # Если нет премиума и достигнут/почти достигнут лимит
@@ -776,7 +790,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<i>Все системы работают нормально! 🎉</i>"
         )
         
-        await update.message.reply_text(status_text, parse_mode='HTML')
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад в меню", callback_data="start_menu")],
+            [InlineKeyboardButton("🆘 Помощь", callback_data="help_btn")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(status_text, reply_markup=reply_markup, parse_mode='HTML')
         
     except Exception as e:
         logger.error(f"Ошибка команды status: {e}")
@@ -814,8 +834,8 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message = "💎 <b>У ВАС АКТИВНА ПРЕМИУМ ПОДПИСКА!</b>\n\nДействует бессрочно"
             
             keyboard = [
-                [InlineKeyboardButton("🔄 Мой статус", callback_data="premium_status")],
-                [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")]
+                [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
+                [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]
             ]
         else:
             # Если нет премиума - предлагаем купить
@@ -841,9 +861,9 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ],
                 [
                     InlineKeyboardButton("12 месяцев - 1990₽", callback_data="buy_12"),
-                    InlineKeyboardButton("🔄 Мой статус", callback_data="premium_status")
+                    InlineKeyboardButton("🎁 Тест 7 дней", callback_data="trial")
                 ],
-                [InlineKeyboardButton("🆘 Помощь", callback_data="help_btn")]
+                [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]
             ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -897,7 +917,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("12 месяцев - 1990₽", callback_data="buy_12"),
                 InlineKeyboardButton("🎁 Тест 7 дней", callback_data="trial")
             ],
-            [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")]
+            [InlineKeyboardButton("🔙 Назад", callback_data="premium_info")]
         ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -920,790 +940,6 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка в buy_command: {e}")
         await update.message.reply_text("❌ Ошибка при оформлении подписки.")
 
-# ========== АДМИН КОМАНДЫ ==========
-
-async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin - панель администратора"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text(
-            f"❌ <b>ДОСТУП ЗАПРЕЩЕН</b>\n\n"
-            f"Ваш ID: <code>{user.id}</code>\n"
-            f"Требуется ID: <code>{ADMIN_ID}</code>\n\n"
-            f"<i>Эта команда только для администратора</i>",
-            parse_mode='HTML'
-        )
-        return
-    
-    # Получаем статистику
-    try:
-        with db.get_connection() as conn:
-            if conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM users")
-                total_users = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
-                premium_users = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM reminders")
-                total_reminders = cursor.fetchone()[0]
-            else:
-                total_users = premium_users = total_reminders = 0
-    except Exception as e:
-        logger.error(f"Ошибка статистики: {e}")
-        total_users = premium_users = total_reminders = 0
-    
-    # Клавиатура с рассылкой
-    keyboard = [
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
-        [InlineKeyboardButton("📨 Рассылка", callback_data="broadcast_text")],
-        [
-            InlineKeyboardButton("💎 Активировать", callback_data="admin_activate"),
-            InlineKeyboardButton("🚫 Деактивировать", callback_data="admin_deactivate_menu")
-        ],
-        [InlineKeyboardButton("🔄 Обновить", callback_data="admin_panel")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
-            f"<b>Статистика:</b>\n"
-            f"• 👥 Пользователей: {total_users}\n"
-            f"• 💎 Премиум: {premium_users}\n"
-            f"• 📝 Напоминаний: {total_reminders}\n\n"
-            f"<b>Доступные функции:</b>\n"
-            f"• 📨 Рассылка сообщений\n"
-            f"• 💎 Управление премиумом\n"
-            f"• 📊 Просмотр статистики\n\n"
-            f"Выберите действие:",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(
-            f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
-            f"<b>Статистика:</b>\n"
-            f"• 👥 Пользователей: {total_users}\n"
-            f"• 💎 Премиум: {premium_users}\n"
-            f"• 📝 Напоминаний: {total_reminders}\n\n"
-            f"<b>Доступные функции:</b>\n"
-            f"• 📨 Рассылка сообщений\n"
-            f"• 💎 Управление премиумом\n"
-            f"• 📊 Просмотр статистики\n\n"
-            f"Выберите действие:",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-
-async def admin_activate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда активации премиума админом"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    if not context.args:
-        keyboard = [
-            [InlineKeyboardButton("👥 Список пользователей", callback_data="admin_users")],
-            [InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "💎 <b>АКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
-            "<b>Использование:</b>\n"
-            "<code>/admin_activate @username 30</code>\n\n"
-            "<b>Где:</b>\n"
-            "• @username — username пользователя\n"
-            "• 30 — количество дней премиума\n\n"
-            "<b>Примеры:</b>\n"
-            "<code>/admin_activate @ivanov 30</code> — на 30 дней\n"
-            "<code>/admin_activate @petrov 365</code> — на год\n\n"
-            "Используйте /admin_users чтобы увидеть список пользователей",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-        return
-    
-    username = context.args[0].replace('@', '')
-    days = int(context.args[1]) if len(context.args) > 1 else 30
-    
-    # Находим пользователя по username
-    with db.get_connection() as conn:
-        if not conn:
-            await update.message.reply_text("❌ Ошибка базы данных.")
-            return
-        
-        cursor = conn.cursor()
-        cursor.execute('SELECT id, telegram_id, first_name FROM users WHERE username = %s', (username,))
-        result = cursor.fetchone()
-        
-        if not result:
-            await update.message.reply_text(f"❌ Пользователь @{username} не найден.")
-            return
-        
-        user_id, telegram_id, first_name = result
-        
-        # Активируем премиум
-        if db.activate_premium(user_id, days):
-            # Отправляем уведомление пользователю
-            try:
-                await context.bot.send_message(
-                    chat_id=telegram_id,
-                    text=f"🎉 <b>Вам активирована премиум подписка!</b>\n\n"
-                         f"Администратор активировал вам премиум подписку на {days} дней.\n\n"
-                         f"<b>Теперь вам доступны:</b>\n"
-                         f"• ♾️ Неограниченные напоминания\n"
-                         f"• 🔄 Повторяющиеся платежи\n"
-                         f"• 🔔 Уведомления за 3 и 7 дней\n\n"
-                         f"Спасибо за использование бота! 💎",
-                    parse_mode='HTML'
-                )
-            except:
-                pass  # Пользователь мог заблокировать бота
-            
-            await update.message.reply_text(
-                f"✅ <b>Премиум успешно активирован!</b>\n\n"
-                f"Пользователь: {first_name or '@'+username}\n"
-                f"Telegram ID: <code>{telegram_id}</code>\n"
-                f"Срок: {days} дней\n\n"
-                f"Пользователь получил уведомление.",
-                parse_mode='HTML'
-            )
-        else:
-            await update.message.reply_text(f"❌ Ошибка активации премиума для @{username}.")
-
-async def admin_deactivate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда деактивации премиума админом (ИСПРАВЛЕННАЯ)"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    if not context.args:
-        keyboard = [
-            [InlineKeyboardButton("👥 Список пользователей", callback_data="admin_users")],
-            [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-            [InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "🚫 <b>ДЕАКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
-            "<b>Использование:</b>\n"
-            "<code>/admin_deactivate @username</code>\n"
-            "или\n"
-            "<code>/admin_deactivate USER_ID</code>\n\n"
-            "<b>Примеры:</b>\n"
-            "<code>/admin_deactivate @ivanov</code>\n"
-            "<code>/admin_deactivate 123456789</code>\n\n"
-            "Для поиска пользователя: /admin_users",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-        return
-    
-    identifier = context.args[0]
-    
-    try:
-        conn = db.get_connection()
-        if not conn:
-            await update.message.reply_text("❌ Ошибка подключения к базе данных.")
-            return
-        
-        cursor = conn.cursor()
-        
-        # Определяем, это username или ID
-        if identifier.startswith('@'):
-            username = identifier.replace('@', '')
-            cursor.execute('''
-                SELECT id, telegram_id, first_name, username, is_premium, premium_until 
-                FROM users 
-                WHERE username = %s OR telegram_id::TEXT = %s
-            ''', (username, identifier))
-        else:
-            # Пробуем как Telegram ID
-            try:
-                telegram_id = int(identifier)
-                cursor.execute('''
-                    SELECT id, telegram_id, first_name, username, is_premium, premium_until 
-                    FROM users 
-                    WHERE telegram_id = %s
-                ''', (telegram_id,))
-            except ValueError:
-                # Пробуем как внутренний ID пользователя
-                try:
-                    user_id = int(identifier)
-                    cursor.execute('''
-                        SELECT id, telegram_id, first_name, username, is_premium, premium_until 
-                        FROM users 
-                        WHERE id = %s
-                    ''', (user_id,))
-                except:
-                    await update.message.reply_text("❌ Неверный формат. Используйте @username, Telegram ID или User ID.")
-                    return
-        
-        result = cursor.fetchone()
-        
-        if not result:
-            await update.message.reply_text(f"❌ Пользователь {identifier} не найден.")
-            cursor.close()
-            return
-        
-        db_user_id, telegram_id, first_name, username_db, is_premium, premium_until = result
-        
-        # Проверяем, есть ли у пользователя активный премиум
-        if not is_premium:
-            await update.message.reply_text(
-                f"ℹ️ У пользователя {first_name or '@' + (username_db or 'нет')} нет активной премиум подписки."
-            )
-            cursor.close()
-            return
-        
-        # Деактивируем премиум
-        if db.deactivate_premium(db_user_id):
-            # Уведомляем пользователя
-            try:
-                await context.bot.send_message(
-                    chat_id=telegram_id,
-                    text=f"⚠️ <b>ВАША ПРЕМИУМ ПОДПИСКА ОТМЕНЕНА</b>\n\n"
-                         f"Администратор отменил вашу премиум подписку.\n\n"
-                         f"<b>Теперь у вас:</b>\n"
-                         f"• 🛑 Только {FREE_LIMIT} бесплатных напоминаний\n"
-                         f"• ⏰ Уведомления только за 1 день\n"
-                         f"• 🔄 Нет повторяющихся платежей\n\n"
-                         f"Вы можете снова оформить премиум через /buy\n\n"
-                         f"По вопросам обращайтесь к администратору.",
-                    parse_mode='HTML'
-                )
-            except Exception as e:
-                logger.warning(f"Не удалось уведомить пользователя {telegram_id}: {e}")
-            
-            # Форматируем дату окончания для отчета
-            premium_until_str = "Неизвестно"
-            if premium_until:
-                if hasattr(premium_until, 'strftime'):
-                    premium_until_str = premium_until.strftime('%d.%m.%Y %H:%M')
-                else:
-                    premium_until_str = str(premium_until)[:16]
-            
-            await update.message.reply_text(
-                f"✅ <b>Премиум подписка отменена!</b>\n\n"
-                f"<b>Пользователь:</b> {first_name or 'Без имени'} (@{username_db or 'нет'})\n"
-                f"<b>Telegram ID:</b> <code>{telegram_id}</code>\n"
-                f"<b>Подписка истекла бы:</b> {premium_until_str}\n\n"
-                f"Пользователь получил уведомление об отмене.",
-                parse_mode='HTML'
-            )
-        else:
-            await update.message.reply_text(f"❌ Не удалось отменить премиум для {identifier}.")
-        
-        cursor.close()
-            
-    except Exception as e:
-        logger.error(f"Ошибка в admin_deactivate_command: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
-
-# ========== РАССЫЛКА СООБЩЕНИЙ ==========
-
-async def admin_broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда рассылки сообщений всем пользователям"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    # Проверяем, есть ли текст для рассылки
-    if not context.args:
-        keyboard = [
-            [
-                InlineKeyboardButton("📝 Текстовая рассылка", callback_data="broadcast_text"),
-                InlineKeyboardButton("🖼️ Рассылка с фото", callback_data="broadcast_photo")
-            ],
-            [
-                InlineKeyboardButton("💎 Только премиум", callback_data="broadcast_premium"),
-                InlineKeyboardButton("🆓 Только бесплатные", callback_data="broadcast_free")
-            ],
-            [
-                InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-                InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")
-            ],
-            [InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "📨 <b>РАССЫЛКА СООБЩЕНИЙ</b>\n\n"
-            "<b>Выберите тип рассылки:</b>\n\n"
-            "• 📝 <b>Текстовая</b> - только текст\n"
-            "• 🖼️ <b>С фото</b> - текст + изображение\n"
-            "• 💎 <b>Премиум</b> - только премиум пользователям\n"
-            "• 🆓 <b>Бесплатные</b> - только бесплатным пользователям\n\n"
-            "<b>Или используйте команды:</b>\n"
-            "<code>/broadcast текст</code> - всем\n"
-            "<code>/broadcast_premium текст</code> - премиум\n"
-            "<code>/broadcast_photo</code> - с фото\n\n"
-            "<b>Внимание:</b> Сообщение будет отправлено ВСЕМ выбранным пользователям!",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-        return
-    
-    # Если есть аргументы - текстовая рассылка всем
-    message_text = " ".join(context.args)
-    context.user_data['broadcast_type'] = 'all'
-    context.user_data['broadcast_message'] = message_text
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Да, отправить всем", callback_data=f"confirm_broadcast_all_{hash(message_text[:30]) % 10000}"),
-            InlineKeyboardButton("❌ Отменить", callback_data="cancel_broadcast")
-        ],
-        [
-            InlineKeyboardButton("💎 Только премиум", callback_data=f"confirm_broadcast_premium_{hash(message_text[:30]) % 10000}"),
-            InlineKeyboardButton("🆓 Только бесплатные", callback_data=f"confirm_broadcast_free_{hash(message_text[:30]) % 10000}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"⚠️ <b>ПОДТВЕРЖДЕНИЕ РАССЫЛКИ</b>\n\n"
-        f"<b>Тип:</b> Всем пользователям\n"
-        f"<b>Сообщение:</b>\n{message_text[:400]}\n\n"
-        f"<b>Выберите аудиторию:</b>",
-        reply_markup=reply_markup,
-        parse_mode='HTML'
-    )
-
-async def admin_broadcast_premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Рассылка только премиум пользователям"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    if not context.args:
-        await update.message.reply_text(
-            "💎 <b>РАССЫЛКА ПРЕМИУМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-            "<b>Использование:</b>\n"
-            "<code>/broadcast_premium Ваш текст</code>\n\n"
-            "<b>Пример:</b>\n"
-            "<code>/broadcast_premium Специальное предложение для премиум пользователей!</code>\n\n"
-            "Сообщение будет отправлено только пользователям с активной премиум подпиской."
-        )
-        return
-    
-    message_text = " ".join(context.args)
-    context.user_data['broadcast_type'] = 'premium'
-    context.user_data['broadcast_message'] = message_text
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Да, отправить премиум", callback_data=f"confirm_broadcast_premium_{hash(message_text[:30]) % 10000}"),
-            InlineKeyboardButton("❌ Отменить", callback_data="cancel_broadcast")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"⚠️ <b>ПОДТВЕРЖДЕНИЕ РАССЫЛКИ</b>\n\n"
-        f"<b>Тип:</b> Только премиум пользователям\n"
-        f"<b>Сообщение:</b>\n{message_text[:400]}\n\n"
-        f"Подтверждаете отправку премиум пользователям?",
-        reply_markup=reply_markup,
-        parse_mode='HTML'
-    )
-
-async def admin_broadcast_photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало рассылки с фотографией"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    # Просим отправить фото
-    await update.message.reply_text(
-        "🖼️ <b>РАССЫЛКА С ФОТОГРАФИЕЙ</b>\n\n"
-        "1. Отправьте мне фотографию (как файл или фото)\n"
-        "2. Затем отправьте текст сообщения\n\n"
-        "Или нажмите /cancel для отмены",
-        parse_mode='HTML'
-    )
-    
-    context.user_data['awaiting_photo'] = True
-    context.user_data['broadcast_type'] = 'photo'
-    return AWAITING_PHOTO
-
-async def handle_broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка фотографии для рассылки"""
-    if update.message.photo:
-        # Берем самое большое фото
-        photo = update.message.photo[-1]
-        context.user_data['photo_file_id'] = photo.file_id
-        context.user_data['photo_caption'] = update.message.caption or ""
-    elif update.message.document and update.message.document.mime_type.startswith('image/'):
-        context.user_data['photo_file_id'] = update.message.document.file_id
-        context.user_data['photo_caption'] = update.message.caption or ""
-    else:
-        await update.message.reply_text("❌ Пожалуйста, отправьте фотографию.")
-        return AWAITING_PHOTO
-    
-    await update.message.reply_text(
-        "✅ Фотография получена!\n\n"
-        "Теперь отправьте текст сообщения для рассылки.\n"
-        "Или напишите /skip чтобы отправить только фото.",
-        parse_mode='HTML'
-    )
-    
-    context.user_data['awaiting_photo'] = False
-    context.user_data['awaiting_text'] = True
-    return AWAITING_TEXT
-
-async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка текста для рассылки с фото"""
-    message_text = update.message.text
-    
-    if message_text == '/skip':
-        message_text = ""
-    
-    context.user_data['broadcast_message'] = message_text
-    context.user_data['awaiting_text'] = False
-    
-    # Показываем предпросмотр
-    photo_file_id = context.user_data.get('photo_file_id')
-    caption = context.user_data.get('photo_caption', '')
-    full_text = f"{caption}\n\n{message_text}".strip()
-    
-    try:
-        await update.message.reply_photo(
-            photo=photo_file_id,
-            caption=f"🖼️ <b>ПРЕДПРОСМОТР РАССЫЛКИ</b>\n\n{full_text[:800]}\n\n"
-                   f"<i>Это сообщение с фото будет отправлено выбранной аудитории.</i>",
-            parse_mode='HTML'
-        )
-    except:
-        await update.message.reply_text(
-            f"📋 <b>ПРЕДПРОСМОТР РАССЫЛКИ</b>\n\n"
-            f"<b>Фото:</b> ✅ загружено\n"
-            f"<b>Текст:</b>\n{full_text[:400]}\n\n"
-            f"<i>Это сообщение с фото будет отправлено выбранной аудитории.</i>",
-            parse_mode='HTML'
-        )
-    
-    # Предлагаем выбрать аудиторию
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Всем", callback_data=f"confirm_photo_all_{hash(full_text[:30]) % 10000}"),
-            InlineKeyboardButton("💎 Премиум", callback_data=f"confirm_photo_premium_{hash(full_text[:30]) % 10000}")
-        ],
-        [
-            InlineKeyboardButton("🆓 Бесплатные", callback_data=f"confirm_photo_free_{hash(full_text[:30]) % 10000}"),
-            InlineKeyboardButton("❌ Отменить", callback_data="cancel_broadcast")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "⚠️ <b>ВЫБЕРИТЕ АУДИТОРИЮ</b>\n\n"
-        "Кому отправить это сообщение с фото?",
-        reply_markup=reply_markup,
-        parse_mode='HTML'
-    )
-    
-    return ConversationHandler.END
-
-async def broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена рассылки"""
-    await update.message.reply_text("❌ Рассылка отменена.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-async def admin_broadcast_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тестовая рассылка (только себе)"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    if not context.args:
-        await update.message.reply_text(
-            "📨 <b>ТЕСТОВАЯ РАССЫЛКА</b>\n\n"
-            "<b>Использование:</b>\n"
-            "<code>/broadcast_test Текст сообщения</code>\n\n"
-            "<b>Пример:</b>\n"
-            "<code>/broadcast_test Проверка рассылки</code>\n\n"
-            "Сообщение будет отправлено только вам для проверки."
-        )
-        return
-    
-    message_text = " ".join(context.args)
-    
-    try:
-        # Отправляем тестовое сообщение себе
-        await update.message.reply_text(
-            f"📨 <b>ТЕСТОВАЯ РАССЫЛКА</b>\n\n{message_text}\n\n"
-            f"<i>Это тестовое сообщение. В реальной рассылке оно будет отправлено всем пользователям.</i>",
-            parse_mode='HTML'
-        )
-        
-        await update.message.reply_text(
-            f"✅ Тестовое сообщение отправлено вам.\n\n"
-            f"Для отправки всем пользователям используйте:\n"
-            f"<code>/broadcast {message_text}</code>",
-            parse_mode='HTML'
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка тестовой рассылки: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
-
-# ========== ФУНКЦИИ РАССЫЛКИ ==========
-
-async def send_text_broadcast(context: ContextTypes.DEFAULT_TYPE, message_text: str, target_type: str, admin_id: int):
-    """Отправка текстовой рассылки"""
-    try:
-        conn = db.get_connection()
-        if not conn:
-            return 0, 0, []
-        
-        cursor = conn.cursor()
-        
-        # Выбираем пользователей по типу
-        if target_type == 'premium':
-            cursor.execute("""
-                SELECT telegram_id FROM users 
-                WHERE telegram_id IS NOT NULL 
-                AND is_premium = TRUE
-            """)
-            title = "💎 ПРЕМИУМ РАССЫЛКА"
-        elif target_type == 'free':
-            cursor.execute("""
-                SELECT telegram_id FROM users 
-                WHERE telegram_id IS NOT NULL 
-                AND is_premium = FALSE
-            """)
-            title = "📢 ОБЪЯВЛЕНИЕ"
-        else:  # all
-            cursor.execute("SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL")
-            title = "📢 ВАЖНОЕ ОБЪЯВЛЕНИЕ"
-        
-        users = cursor.fetchall()
-        cursor.close()
-        
-        if not users:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=f"❌ Нет пользователей для рассылки типа: {target_type}"
-            )
-            return 0, 0, []
-        
-        total_users = len(users)
-        sent_count = 0
-        failed_users = []
-        
-        # Отправляем прогресс начала
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"⏳ <b>НАЧАЛАСЬ РАССЫЛКА</b>\n\n"
-                 f"Тип: {target_type}\n"
-                 f"Пользователей: {total_users}\n"
-                 f"Сообщение: {message_text[:100]}...",
-            parse_mode='HTML'
-        )
-        
-        # Отправляем сообщение каждому пользователю
-        for i, (telegram_id,) in enumerate(users, 1):
-            try:
-                await context.bot.send_message(
-                    chat_id=telegram_id,
-                    text=f"{title}\n\n{message_text}\n\n"
-                         f"<i>С уважением, команда НеЗабудьОплатить</i>",
-                    parse_mode='HTML'
-                )
-                sent_count += 1
-                
-                # Логируем прогресс
-                if i % 20 == 0:
-                    progress = i / total_users * 100
-                    logger.info(f"📨 {target_type}: отправлено {i}/{total_users} ({progress:.1f}%)")
-                
-                # Небольшая задержка
-                import asyncio
-                await asyncio.sleep(0.03)
-                
-            except Exception as e:
-                logger.error(f"Ошибка отправки пользователю {telegram_id}: {e}")
-                failed_users.append(telegram_id)
-        
-        # Отчет
-        success_rate = (sent_count / total_users * 100) if total_users > 0 else 0
-        await send_broadcast_report(context, admin_id, sent_count, total_users, 
-                                  failed_users, message_text, target_type, 'text')
-        
-        return sent_count, total_users, failed_users
-        
-    except Exception as e:
-        logger.error(f"Критическая ошибка рассылки: {e}")
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"❌ <b>КРИТИЧЕСКАЯ ОШИБКА РАССЫЛКИ</b>\n\n{str(e)[:500]}",
-            parse_mode='HTML'
-        )
-        return 0, 0, []
-
-async def send_photo_broadcast(context: ContextTypes.DEFAULT_TYPE, photo_file_id: str, 
-                             caption: str, message_text: str, target_type: str, admin_id: int):
-    """Отправка рассылки с фотографией"""
-    try:
-        conn = db.get_connection()
-        if not conn:
-            return 0, 0, []
-        
-        cursor = conn.cursor()
-        
-        # Выбираем пользователей по типу
-        if target_type == 'premium':
-            cursor.execute("""
-                SELECT telegram_id FROM users 
-                WHERE telegram_id IS NOT NULL 
-                AND is_premium = TRUE
-            """)
-        elif target_type == 'free':
-            cursor.execute("""
-                SELECT telegram_id FROM users 
-                WHERE telegram_id IS NOT NULL 
-                AND is_premium = FALSE
-            """)
-        else:  # all
-            cursor.execute("SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL")
-        
-        users = cursor.fetchall()
-        cursor.close()
-        
-        if not users:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=f"❌ Нет пользователей для рассылки типа: {target_type}"
-            )
-            return 0, 0, []
-        
-        total_users = len(users)
-        sent_count = 0
-        failed_users = []
-        
-        # Формируем полный текст
-        full_caption = f"{caption}\n\n{message_text}".strip() if message_text else caption
-        
-        # Отправляем прогресс начала
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"🖼️ <b>НАЧАЛАСЬ РАССЫЛКА С ФОТО</b>\n\n"
-                 f"Тип: {target_type}\n"
-                 f"Пользователей: {total_users}",
-            parse_mode='HTML'
-        )
-        
-        # Отправляем фото каждому пользователю
-        for i, (telegram_id,) in enumerate(users, 1):
-            try:
-                await context.bot.send_photo(
-                    chat_id=telegram_id,
-                    photo=photo_file_id,
-                    caption=f"📢 <b>ВАЖНОЕ ОБЪЯВЛЕНИЕ</b>\n\n{full_caption}\n\n"
-                           f"<i>С уважением, команда НеЗабудьОплатить</i>",
-                    parse_mode='HTML'
-                )
-                sent_count += 1
-                
-                # Логируем прогресс
-                if i % 15 == 0:  # Реже из-за фото
-                    progress = i / total_users * 100
-                    logger.info(f"🖼️ {target_type}: отправлено {i}/{total_users} ({progress:.1f}%)")
-                
-                # Большая задержка для фото
-                import asyncio
-                await asyncio.sleep(0.1)
-                
-            except Exception as e:
-                logger.error(f"Ошибка отправки фото пользователю {telegram_id}: {e}")
-                failed_users.append(telegram_id)
-        
-        # Отчет
-        await send_broadcast_report(context, admin_id, sent_count, total_users, 
-                                  failed_users, f"[ФОТО] {full_caption[:100]}...", 
-                                  target_type, 'photo')
-        
-        return sent_count, total_users, failed_users
-        
-    except Exception as e:
-        logger.error(f"Критическая ошибка фото-рассылки: {e}")
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"❌ <b>КРИТИЧЕСКАЯ ОШИБКА ФОТО-РАССЫЛКИ</b>\n\n{str(e)[:500]}",
-            parse_mode='HTML'
-        )
-        return 0, 0, []
-
-async def send_broadcast_report(context: ContextTypes.DEFAULT_TYPE, admin_id: int, 
-                              sent_count: int, total_users: int, failed_users: list,
-                              message_text: str, target_type: str, broadcast_type: str):
-    """Отправка отчета о рассылке"""
-    try:
-        success_rate = (sent_count / total_users * 100) if total_users > 0 else 0
-        
-        # Иконка типа рассылки
-        type_icon = "🖼️" if broadcast_type == 'photo' else "📝"
-        
-        # Текст типа аудитории
-        target_text = {
-            'all': 'всем пользователям',
-            'premium': 'премиум пользователям',
-            'free': 'бесплатным пользователям'
-        }.get(target_type, target_type)
-        
-        report = (
-            f"{type_icon} <b>ОТЧЕТ О РАССЫЛКЕ</b>\n\n"
-            f"<b>Тип:</b> {target_text}\n"
-            f"<b>Формат:</b> {'Фото + текст' if broadcast_type == 'photo' else 'Текст'}\n\n"
-            f"<b>Статистика:</b>\n"
-            f"• 👥 Всего получателей: {total_users}\n"
-            f"• ✅ Успешно отправлено: {sent_count}\n"
-            f"• ❌ Не отправлено: {len(failed_users)}\n"
-            f"• 📈 Успешность: {success_rate:.1f}%\n\n"
-            f"<b>Сообщение:</b>\n{message_text[:300]}"
-        )
-        
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=report,
-            parse_mode='HTML'
-        )
-        
-        # Если есть неудачные отправки
-        if failed_users:
-            failed_count = len(failed_users)
-            sample = "\n".join(map(str, failed_users[:20]))
-            
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=f"📋 <b>Не отправлено (первые 20 из {failed_count}):</b>\n\n{sample}",
-                parse_mode='HTML'
-            )
-            
-    except Exception as e:
-        logger.error(f"Ошибка отправки отчета: {e}")
-
 # ========== ОБРАБОТЧИК КНОПОК ==========
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1713,16 +949,54 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # Основные кнопки
-        if query.data == "create":
+        if query.data == "new_reminder":
+            # Используем команду /new через создание временного сообщения
+            from telegram import Message
+            from telegram._utils.types import ReplyMarkup
+            
+            # Создаем fake message для вызова new_command
+            fake_message = Message(
+                message_id=query.message.message_id + 1,
+                date=datetime.now(),
+                chat=query.message.chat,
+                text="/new"
+            )
+            fake_message.from_user = query.from_user
+            
+            # Создаем fake update
+            fake_update = Update(
+                update_id=query.id,
+                message=fake_message
+            )
+            
+            # Запускаем команду /new
+            await new_command(fake_update, context)
+            
+        elif query.data == "start_menu":
+            # Возврат в главное меню через создание fake команды /start
+            fake_message = Message(
+                message_id=query.message.message_id + 1,
+                date=datetime.now(),
+                chat=query.message.chat,
+                text="/start"
+            )
+            fake_message.from_user = query.from_user
+            
+            fake_update = Update(
+                update_id=query.id,
+                message=fake_message
+            )
+            
+            await start(fake_update, context)
+            
+        elif query.data == "create":
+            # Альтернативная кнопка создания (для обратной совместимости)
             await query.edit_message_text(
                 "📝 <b>СОЗДАНИЕ НАПОМИНАНИЯ</b>\n\n"
-                "Для создания напоминания используйте команду:\n"
-                "<code>/new</code>\n\n"
-                "Или нажмите на одну из кнопок ниже:",
+                "Для создания напоминания нажмите кнопку:",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                    [InlineKeyboardButton("💎 Премиум", callback_data="premium_info")],
-                    [InlineKeyboardButton("🆘 Помощь", callback_data="help_btn")]
+                    [InlineKeyboardButton("➕ Создать напоминание", callback_data="new_reminder")],
+                    [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]
                 ]),
                 parse_mode='HTML'
             )
@@ -1734,15 +1008,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data == "premium_info":
             # Создаем временный update для premium_command
             class FakeMessage:
-                def __init__(self, user):
+                def __init__(self, user, chat):
                     self.from_user = user
                     self.text = "/premium"
-                    self.chat_id = user.id
+                    self.chat = chat
                 
                 async def reply_text(self, text, **kwargs):
                     return await query.edit_message_text(text, **kwargs)
             
-            fake_msg = FakeMessage(query.from_user)
+            fake_msg = FakeMessage(query.from_user, query.message.chat)
             fake_update = Update(update_id=query.id, message=fake_msg, callback_query=query)
             
             await premium_command(fake_update, context)
@@ -1761,7 +1035,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         InlineKeyboardButton("12 месяцев - 1990₽", callback_data="buy_12"),
                         InlineKeyboardButton("🎁 Тест 7 дней", callback_data="trial")
                     ],
-                    [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")]
+                    [InlineKeyboardButton("🔙 Назад", callback_data="premium_info")]
                 ]),
                 parse_mode='HTML'
             )
@@ -1773,7 +1047,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 keyboard = [
                     [InlineKeyboardButton("✅ Я оплатил", callback_data=f"manual_paid_{period}")],
-                    [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")]
+                    [InlineKeyboardButton("🔙 Назад", callback_data="premium_info")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
@@ -1812,13 +1086,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     keyboard = [
                         [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
-                        [InlineKeyboardButton("🔄 Обновить статус", callback_data="premium_status")]
+                        [InlineKeyboardButton("🔙 Назад", callback_data="premium_info")]
                     ]
                 else:
                     message = "🆓 <b>ПРЕМИУМ СТАТУС</b>\n\nУ вас нет активной премиум подписки."
                     keyboard = [
                         [InlineKeyboardButton("💎 Купить премиум", callback_data="buy_premium")],
-                        [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")]
+                        [InlineKeyboardButton("🔙 Назад", callback_data="premium_info")]
                     ]
                 
                 await query.edit_message_text(
@@ -1851,6 +1125,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Ошибка при удалении.")
                 
         elif query.data == "help_btn":
+            keyboard = [
+                [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")],
+                [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(
                 "<b>🔔 НеЗабудьОплатить — помощь</b>\n\n"
                 "<b>Основные команды:</b>\n"
@@ -1864,6 +1144,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний\n"
                 "<b>Уведомления:</b> каждый день в 10:00 по Москве\n\n"
                 "<i>По вопросам обращайтесь к администратору</i>",
+                reply_markup=reply_markup,
                 parse_mode='HTML'
             )
         
@@ -1931,6 +1212,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id = db.get_or_create_user(user.id, user.username, user.first_name, user.last_name)
             
             if db.activate_premium(user_id, 7):
+                keyboard = [
+                    [InlineKeyboardButton("📋 Мои напоминания", callback_data="list")],
+                    [InlineKeyboardButton("🔙 Назад", callback_data="premium_info")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
                 await query.edit_message_text(
                     "🎉 <b>Тестовый премиум активирован!</b>\n\n"
                     "Вам доступны все функции премиума на 7 дней:\n\n"
@@ -1938,6 +1225,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "• 🔄 Повторяющиеся платежи\n"
                     "• 🔔 Уведомления за 3 и 7 дней\n\n"
                     "Наслаждайтесь! Если понравится - сможете оформить полную подписку. 💎",
+                    reply_markup=reply_markup,
                     parse_mode='HTML'
                 )
             else:
@@ -1956,7 +1244,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     # 1. Логируем нажатие
                     logger.info(f"💰 Кнопка 'Я оплатил' нажата: user_id={user.id}, username=@{user.username}, period={period}")
-                    print(f"DEBUG: Кнопка 'Я оплатил' нажата пользователем {user.id}")
                     
                     # 2. Сообщение пользователю
                     await query.edit_message_text(
@@ -1974,20 +1261,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode='HTML'
                     )
                     
-                    # 3. ВАЖНОЕ ИСПРАВЛЕНИЕ: Проверяем ADMIN_ID
-                    print(f"DEBUG: ADMIN_ID = {ADMIN_ID}, type = {type(ADMIN_ID)}")
-                    print(f"DEBUG: Текущий пользователь ID = {user.id}")
-                    
-                    # Проверяем, что ADMIN_ID валидный
-                    if not ADMIN_ID or ADMIN_ID == 0:
-                        logger.error("❌ ADMIN_ID не настроен!")
-                        await query.message.reply_text(
-                            "⚠️ <b>Техническая ошибка</b>\n\n"
-                            "ADMIN_ID не настроен. Сообщите об этом администратору."
-                        )
-                        return
-                    
-                    # 4. Формируем уведомление для администратора
+                    # 3. Формируем уведомление для администратора
                     try:
                         username_display = f"@{user.username}" if user.username else f"ID_{user.id}"
                         first_name_display = user.first_name or "Не указано"
@@ -2012,35 +1286,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"<i>Для просмотра всех заявок: /admin_requests</i>"
                         )
                         
-                        # 5. Отправляем уведомление администратору
-                        print(f"DEBUG: Пробуем отправить сообщение администратору {ADMIN_ID}")
-                        
+                        # 4. Отправляем уведомление администратору
                         sent_message = await context.bot.send_message(
                             chat_id=ADMIN_ID,
                             text=admin_message,
                             parse_mode='HTML'
                         )
                         
-                        # 6. Логируем успешную отправку
                         logger.info(f"✅ Уведомление отправлено администратору {ADMIN_ID}. Message ID: {sent_message.message_id}")
-                        print(f"✅ УВЕДОМЛЕНИЕ ОТПРАВЛЕНО АДМИНИСТРАТОРУ!")
-                        print(f"DEBUG: Текст уведомления:\n{admin_message}")
                         
                     except Exception as admin_error:
-                        # 7. ДЕТАЛЬНАЯ ОБРАБОТКА ОШИБОК
                         error_msg = str(admin_error)
                         logger.error(f"❌ Ошибка отправки уведомления админу: {error_msg}")
-                        print(f"❌ ОШИБКА ОТПРАВКИ АДМИНУ: {error_msg}")
-                        
-                        # Определяем тип ошибки
-                        if "chat not found" in error_msg.lower():
-                            error_info = "Чат с администратором не найден. Проверьте ADMIN_ID."
-                        elif "bot was blocked" in error_msg.lower():
-                            error_info = "Бот заблокирован администратором."
-                        elif "Forbidden" in error_msg:
-                            error_info = "У бота нет доступа к чату администратора."
-                        else:
-                            error_info = f"Техническая ошибка: {error_msg[:100]}"
                         
                         # Сообщаем пользователю
                         await query.message.reply_text(
@@ -2048,12 +1305,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"Не удалось автоматически уведомить администратора.\n\n"
                             f"<b>Ваши данные для ручной активации:</b>\n"
                             f"• Ваш ID: <code>{user.id}</code>\n"
-                            f"• Подписка: {price_info['text']}\n"
+                            f"• Подпика: {price_info['text']}\n"
                             f"• Сумма: {price_info['amount']}₽\n\n"
                             f"<b>Сообщите администратору:</b>\n"
                             f"Используйте команду:\n"
-                            f"<code>/admin_activate {user.id} {price_info['days']}</code>\n\n"
-                            f"{error_info}",
+                            f"<code>/admin_activate {user.id} {price_info['days']}</code>",
                             parse_mode='HTML'
                         )
                         
@@ -2066,7 +1322,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
             except Exception as e:
                 logger.error(f"❌ Общая ошибка в обработчике manual_paid_: {e}", exc_info=True)
-                print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
                 
                 try:
                     await query.edit_message_text(
@@ -2076,181 +1331,153 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 except:
                     pass
-                
+        
+        # Админ рассылка кнопки (упрощенная версия)
         elif query.data == "broadcast_text":
+            keyboard = [
+                [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(
                 "📝 <b>ТЕКСТОВАЯ РАССЫЛКА</b>\n\n"
                 "Используйте команду:\n"
                 "<code>/broadcast Ваш текст</code>\n\n"
                 "<b>Пример:</b>\n"
-                "<code>/broadcast Новое обновление! Добавлены крутые функции</code>\n\n"
-                "<b>Или выберите аудиторию:</b>",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("👥 Всем", callback_data="broadcast_all_menu"),
-                        InlineKeyboardButton("💎 Премиум", callback_data="broadcast_premium_menu")
-                    ],
-                    [
-                        InlineKeyboardButton("🆓 Бесплатные", callback_data="broadcast_free_menu"),
-                        InlineKeyboardButton("↩️ Назад", callback_data="admin_panel")
-                    ]
-                ]),
+                "<code>/broadcast Новое обновление! Добавлены крутые функции</code>",
+                reply_markup=reply_markup,
                 parse_mode='HTML'
             )
             
         elif query.data == "broadcast_photo":
+            keyboard = [
+                [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(
                 "🖼️ <b>РАССЫЛКА С ФОТО</b>\n\n"
                 "Используйте команду:\n"
                 "<code>/broadcast_photo</code>\n\n"
-                "Затем отправьте фото и текст.\n\n"
-                "<b>Или вернитесь в меню рассылки:</b>",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
+                "Затем отправьте фото и текст.",
+                reply_markup=reply_markup,
                 parse_mode='HTML'
             )
             
         elif query.data == "broadcast_premium":
+            keyboard = [
+                [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(
                 "💎 <b>РАССЫЛКА ПРЕМИУМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
                 "Используйте команду:\n"
                 "<code>/broadcast_premium Ваш текст</code>\n\n"
                 "<b>Пример:</b>\n"
-                "<code>/broadcast_premium Специальное предложение для наших премиум пользователей!</code>\n\n"
-                "<b>Или вернитесь в меню рассылки:</b>",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
+                "<code>/broadcast_premium Специальное предложение для наших премиум пользователей!</code>",
+                reply_markup=reply_markup,
                 parse_mode='HTML'
             )
             
         elif query.data == "broadcast_free":
+            keyboard = [
+                [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(
                 "🆓 <b>РАССЫЛКА БЕСПЛАТНЫМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
                 "Используйте команду:\n"
                 "<code>/broadcast Ваш текст</code>\n\n"
-                "А затем выберите 'Только бесплатные'\n\n"
-                "<b>Или вернитесь в меню рассылки:</b>",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
+                "А затем выберите 'Только бесплатные'",
+                reply_markup=reply_markup,
                 parse_mode='HTML'
             )
-            
-        elif query.data == "broadcast_all_menu":
-            await query.edit_message_text(
-                "👥 <b>РАССЫЛКА ВСЕМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-                "Используйте команду:\n"
-                "<code>/broadcast Ваш текст</code>\n\n"
-                "Или вернитесь в меню рассылки:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "broadcast_premium_menu":
-            await query.edit_message_text(
-                "💎 <b>РАССЫЛКА ПРЕМИУМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-                "Используйте команду:\n"
-                "<code>/broadcast_premium Ваш текст</code>\n\n"
-                "Или вернитесь в меню рассылки:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        elif query.data == "broadcast_free_menu":
-            await query.edit_message_text(
-                "🆓 <b>РАССЫЛКА БЕСПЛАТНЫМ ПОЛЬЗОВАТЕЛЯМ</b>\n\n"
-                "Используйте команду:\n"
-                "<code>/broadcast Ваш текст</code>\n\n"
-                "А затем выберите 'Только бесплатные'\n\n"
-                "Или вернитесь в меню рассылки:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Меню рассылки", callback_data="broadcast_text")]
-                ]),
-                parse_mode='HTML'
-            )
-            
-        # ОБРАБОТЧИКИ ПОДТВЕРЖДЕНИЯ РАССЫЛКИ
-        elif query.data.startswith("confirm_broadcast_all_"):
-            await handle_confirm_broadcast(query, context, 'all', 'text')
-            
-        elif query.data.startswith("confirm_broadcast_premium_"):
-            await handle_confirm_broadcast(query, context, 'premium', 'text')
-            
-        elif query.data.startswith("confirm_broadcast_free_"):
-            await handle_confirm_broadcast(query, context, 'free', 'text')
-            
-        elif query.data.startswith("confirm_photo_all_"):
-            await handle_confirm_broadcast(query, context, 'all', 'photo')
-            
-        elif query.data.startswith("confirm_photo_premium_"):
-            await handle_confirm_broadcast(query, context, 'premium', 'photo')
-            
-        elif query.data.startswith("confirm_photo_free_"):
-            await handle_confirm_broadcast(query, context, 'free', 'photo')
-            
-        elif query.data == "cancel_broadcast":
-            await query.edit_message_text("❌ Рассылка отменена.")
-            context.user_data.pop('broadcast_message', None)
-            context.user_data.pop('photo_file_id', None)
-            context.user_data.pop('photo_caption', None)
             
     except Exception as e:
         logger.error(f"Ошибка в button_handler: {e}")
         await query.message.reply_text("⚠️ Произошла ошибка. Попробуйте команду /start")
 
-async def handle_confirm_broadcast(query, context, target_type, broadcast_type):
-    """Обработка подтверждения рассылки"""
-    if query.from_user.id != ADMIN_ID:
-        await query.edit_message_text("❌ Доступ запрещен.")
+# ========== ОБНОВЛЕННАЯ ФУНКЦИЯ АДМИН-ПАНЕЛИ ==========
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /admin - панель администратора"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text(
+            f"❌ <b>ДОСТУП ЗАПРЕЩЕН</b>\n\n"
+            f"Ваш ID: <code>{user.id}</code>\n"
+            f"Требуется ID: <code>{ADMIN_ID}</code>\n\n"
+            f"<i>Эта команда только для администратора</i>",
+            parse_mode='HTML'
+        )
         return
     
-    await query.edit_message_text(
-        f"⏳ <b>НАЧИНАЮ РАССЫЛКУ...</b>\n\n"
-        f"Тип: {target_type}\n"
-        f"Формат: {'Фото' if broadcast_type == 'photo' else 'Текст'}\n\n"
-        f"<i>Это может занять несколько минут. Вы получите отчет по завершении.</i>",
-        parse_mode='HTML'
-    )
+    # Получаем статистику
+    try:
+        with db.get_connection() as conn:
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM users")
+                total_users = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
+                premium_users = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM reminders")
+                total_reminders = cursor.fetchone()[0]
+            else:
+                total_users = premium_users = total_reminders = 0
+    except Exception as e:
+        logger.error(f"Ошибка статистики: {e}")
+        total_users = premium_users = total_reminders = 0
     
-    import asyncio
+    # Клавиатура с рассылкой
+    keyboard = [
+        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
+        [InlineKeyboardButton("📨 Рассылка", callback_data="broadcast_text")],
+        [
+            InlineKeyboardButton("💎 Активировать", callback_data="admin_activate"),
+            InlineKeyboardButton("🚫 Деактивировать", callback_data="admin_deactivate_menu")
+        ],
+        [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]
+    ]
     
-    if broadcast_type == 'photo':
-        # Фото рассылка
-        photo_file_id = context.user_data.get('photo_file_id')
-        caption = context.user_data.get('photo_caption', '')
-        message_text = context.user_data.get('broadcast_message', '')
-        
-        if not photo_file_id:
-            await query.edit_message_text("❌ Ошибка: фото не найдено.")
-            return
-        
-        asyncio.create_task(
-            send_photo_broadcast(context, photo_file_id, caption, message_text, 
-                               target_type, ADMIN_ID)
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
+            f"<b>Статистика:</b>\n"
+            f"• 👥 Пользователей: {total_users}\n"
+            f"• 💎 Премиум: {premium_users}\n"
+            f"• 📝 Напоминаний: {total_reminders}\n\n"
+            f"<b>Доступные функции:</b>\n"
+            f"• 📨 Рассылка сообщений\n"
+            f"• 💎 Управление премиумом\n"
+            f"• 📊 Просмотр статистики\n\n"
+            f"Выберите действие:",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
         )
     else:
-        # Текстовая рассылка
-        message_text = context.user_data.get('broadcast_message')
-        if not message_text:
-            await query.edit_message_text("❌ Ошибка: текст сообщения не найден.")
-            return
-        
-        asyncio.create_task(
-            send_text_broadcast(context, message_text, target_type, ADMIN_ID)
+        await update.message.reply_text(
+            f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
+            f"<b>Статистика:</b>\n"
+            f"• 👥 Пользователей: {total_users}\n"
+            f"• 💎 Премиум: {premium_users}\n"
+            f"• 📝 Напоминаний: {total_reminders}\n\n"
+            f"<b>Доступные функции:</b>\n"
+            f"• 📨 Рассылка сообщений\n"
+            f"• 💎 Управление премиумом\n"
+            f"• 📊 Просмотр статистики\n\n"
+            f"Выберите действие:",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
         )
-    
-    # Очищаем данные
-    context.user_data.pop('broadcast_message', None)
-    context.user_data.pop('photo_file_id', None)
-    context.user_data.pop('photo_caption', None)
-
-# ========== АДМИН ОБРАБОТЧИКИ ==========
 
 async def admin_stats_handler(query, context):
     """Обработчик статистики админа"""
@@ -2273,12 +1500,18 @@ async def admin_stats_handler(query, context):
             else:
                 total = premium = reminders = 0
         
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await query.edit_message_text(
             f"📊 <b>СТАТИСТИКА БОТА</b>\n\n"
             f"• 👥 Всего пользователей: {total}\n"
             f"• 💎 Премиум пользователей: {premium}\n"
             f"• 📝 Всего напоминаний: {reminders}\n\n"
             f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>",
+            reply_markup=reply_markup,
             parse_mode='HTML'
         )
     except Exception as e:
@@ -2330,264 +1563,13 @@ async def admin_users_handler(query, context):
                 InlineKeyboardButton("💎 Активировать", callback_data="admin_activate"),
                 InlineKeyboardButton("🚫 Деактивировать", callback_data="admin_deactivate_menu")
             ],
-            [InlineKeyboardButton("🔄 Обновить", callback_data="admin_users")]
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
     except Exception as e:
         await query.edit_message_text(f"❌ Ошибка: {str(e)[:100]}")
-
-# ========== ТЕСТОВЫЕ КОМАНДЫ ==========
-
-async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тестовая команда /test"""
-    await update.message.reply_text(
-        f"✅ <b>Бот работает!</b>\n\n"
-        f"Время: {datetime.now().strftime('%H:%M:%S')}\n"
-        f"ADMIN_ID: {ADMIN_ID}\n"
-        f"Ваш ID: {update.effective_user.id}\n"
-        f"Вы админ: {'✅ Да' if update.effective_user.id == ADMIN_ID else '❌ Нет'}",
-        parse_mode='HTML'
-    )
-
-async def test_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тестовая команда для проверки уведомлений"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    # Имитируем отправку уведомления
-    try:
-        await context.bot.send_message(
-            chat_id=update.effective_user.id,
-            text="🔔 <b>ТЕСТОВОЕ УВЕДОМЛЕНИЕ</b>\n\n"
-                 "Это тестовое сообщение от системы уведомлений.\n"
-                 "Если вы его получили, значит бот работает правильно! ✅",
-            parse_mode='HTML'
-        )
-        await update.message.reply_text("✅ Тестовое уведомление отправлено!")
-    except Exception as e:
-        logger.error(f"❌ Ошибка тестового уведомления: {e}")
-        await update.message.reply_text(f"❌ Ошибка отправки: {str(e)[:100]}")
-
-async def test_admin_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тестовая команда /test_admin - проверка уведомлений админу"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    try:
-        test_message = (
-            f"🔔 <b>ТЕСТ УВЕДОМЛЕНИЙ АДМИНИСТРАТОРУ</b>\n\n"
-            f"✅ Система уведомлений работает!\n\n"
-            f"<b>Ваш ID администратора:</b> <code>{ADMIN_ID}</code>\n"
-            f"<b>Время:</b> {datetime.now().strftime('%H:%M:%S')}\n\n"
-            f"<i>Теперь протестируйте оплату от лица пользователя</i>"
-        )
-        
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=test_message,
-            parse_mode='HTML'
-        )
-        
-        await update.message.reply_text(
-            "✅ <b>Тестовое уведомление отправлено!</b>\n\n"
-            "Проверьте сообщения от бота.\n"
-            "Если получили - система работает!\n\n"
-            "<b>Теперь протестируйте оплату:</b>\n"
-            "1. Откройте бота как пользователь\n"
-            "2. 💎 Премиум → 1 месяц → ✅ Я оплатил\n"
-            "3. Вернитесь сюда и проверьте уведомление",
-            parse_mode='HTML'
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка test_admin_notify: {e}")
-        await update.message.reply_text(f"❌ Ошибка теста: {str(e)[:100]}")
-
-async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_requests - управление заявками на оплату"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text(
-            f"❌ <b>ДОСТУП ЗАПРЕЩЕН</b>\n\n"
-            f"Ваш ID: <code>{user.id}</code>\n"
-            f"Требуется ID: <code>{ADMIN_ID}</code>",
-            parse_mode='HTML'
-        )
-        return
-    
-    help_text = (
-        "💰 <b>УПРАВЛЕНИЕ ЗАЯВКАМИ НА ОПЛАТУ</b>\n\n"
-        
-        "<b>Когда пользователь нажимает '✅ Я оплатил':</b>\n"
-        "1. 📨 <b>Вам приходит уведомление</b> в этот чат\n"
-        "2. 👤 Пользователь получает подтверждение\n"
-        "3. ⚡ Вы активируете премиум командой:\n\n"
-        
-        "<code>/admin_activate @username ДНИ</code>\n\n"
-        
-        "<b>Примеры:</b>\n"
-        "<code>/admin_activate @ivanov 30</code> - на 30 дней\n"
-        "<code>/admin_activate 123456789 90</code> - по ID\n\n"
-        
-        "<b>Для тестирования:</b>\n"
-        "• /test_admin - тест уведомлений\n"
-        "• /admin_users - список пользователей"
-    )
-    
-    keyboard = [
-        [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
-         InlineKeyboardButton("💎 Активировать", callback_data="admin_activate")],
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-         InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")],
-        [InlineKeyboardButton("🧪 Тест уведомлений", callback_data="test_admin_notify")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
-
-async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_requests - просмотр заявок на оплату"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text(
-            f"❌ <b>ДОСТУП ЗАПРЕЩЕН</b>\n\n"
-            f"Ваш ID: <code>{user.id}</code>\n"
-            f"Требуется ID: <code>{ADMIN_ID}</code>\n\n"
-            f"<i>Эта команда только для администратора</i>",
-            parse_mode='HTML'
-        )
-        return
-    
-    try:
-        # Информационное сообщение
-        help_text = (
-            "💰 <b>УПРАВЛЕНИЕ ЗАЯВКАМИ НА ОПЛАТУ</b>\n\n"
-            
-            "<b>Когда пользователь нажимает '✅ Я оплатил':</b>\n"
-            "1. 📨 <b>Вам приходит уведомление</b> в этот чат\n"
-            "2. 👤 Пользователь получает подтверждение\n"
-            "3. ⏳ Вы активируете премиум вручную\n\n"
-            
-            "<b>Команды для активации:</b>\n"
-            "• <code>/admin_activate @username 30</code> - на 30 дней\n"
-            "• <code>/admin_activate @username 90</code> - на 90 дней\n"
-            "• <code>/admin_activate @username 365</code> - на год\n\n"
-            
-            "<b>Пример:</b>\n"
-            "<code>/admin_activate @ivanov_91 30</code>\n\n"
-            
-            "<b>Для поиска пользователей:</b>\n"
-            "• Используйте /admin_users\n"
-            "• Или кнопку '👥 Пользователи' в админ панели\n\n"
-            
-            "<b>Проверьте:</b>\n"
-            "1. Уведомления в этом чате\n"
-            "2. Логи в панели Render\n"
-            "3. Сообщения от пользователей"
-        )
-        
-        # Клавиатура
-        keyboard = [
-            [
-                InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
-                InlineKeyboardButton("💎 Активировать", callback_data="admin_activate")
-            ],
-            [
-                InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-                InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel")
-            ],
-            [
-                InlineKeyboardButton("🔄 Проверить уведомления", callback_data="check_notifications")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
-        
-    except Exception as e:
-        logger.error(f"Ошибка в admin_requests_command: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:100]}")
-
-# ========== НОВАЯ ТЕСТОВАЯ КОМАНДА ДЛЯ ПРОВЕРКИ УВЕДОМЛЕНИЙ ==========
-
-async def test_payment_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тестовая команда для проверки уведомлений о платежах"""
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Команда только для администратора.")
-        return
-    
-    try:
-        # Тестовое уведомление
-        test_message = (
-            f"🧪 <b>ТЕСТ УВЕДОМЛЕНИЙ О ПЛАТЕЖАХ</b>\n\n"
-            f"✅ Система уведомлений работает!\n\n"
-            f"<b>Техническая информация:</b>\n"
-            f"• ADMIN_ID: <code>{ADMIN_ID}</code>\n"
-            f"• Ваш ID: <code>{user.id}</code>\n"
-            f"• Совпадение: {'✅ Да' if user.id == ADMIN_ID else '❌ Нет'}\n"
-            f"• Время: {datetime.now().strftime('%H:%M:%S')}\n\n"
-            f"<b>Если вы видите это сообщение:</b>\n"
-            f"1. Бот может отправлять вам сообщения ✅\n"
-            f"2. Теперь протестируйте кнопку '✅ Я оплатил'\n"
-            f"3. Откройте бота как пользователь\n"
-            f"4. 💎 Премиум → 1 месяц → ✅ Я оплатил"
-        )
-        
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=test_message,
-            parse_mode='HTML'
-        )
-        
-        await update.message.reply_text(
-            "✅ <b>Тестовое уведомление отправлено!</b>\n\n"
-            "Проверьте сообщения от бота.\n\n"
-            "<b>Если получили - переходите к тесту оплаты:</b>\n"
-            "1. Откройте @BotFather\n"
-            "2. Начните диалог с вашим ботом\n"
-            "3. 💎 Премиум → 1 месяц → ✅ Я оплатил\n"
-            "4. Вернитесь сюда и проверьте уведомление",
-            parse_mode='HTML'
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка test_payment_notify: {e}")
-        await update.message.reply_text(
-            f"❌ <b>ОШИБКА ТЕСТА!</b>\n\n"
-            f"Не удалось отправить тестовое сообщение.\n\n"
-            f"<b>Причина:</b>\n"
-            f"{str(e)[:200]}\n\n"
-            f"<b>Проверьте:</b>\n"
-            f"1. Правильный ли ADMIN_ID?\n"
-            f"2. Не заблокировали ли вы бота?\n"
-            f"3. Работает ли бот вообще?",
-            parse_mode='HTML'
-        )
-
-# ========== ОБРАБОТЧИК ОШИБОК ==========
-
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик ошибок"""
-    logger.error(f"Ошибка бота: {context.error}", exc_info=True)
-    
-    try:
-        if update and update.effective_message:
-            await update.effective_message.reply_text(
-                "⚠️ Произошла ошибка. Попробуйте команду /start"
-            )
-    except:
-        pass
 
 # ========== ЗАПУСК БОТА ==========
 
