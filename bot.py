@@ -1,4 +1,4 @@
-# bot.py - полный исправленный код с keep-alive
+# bot.py - полный исправленный код с keep-alive (без ЮKassa)
 import os
 import logging
 from datetime import datetime, timedelta, time
@@ -18,7 +18,6 @@ import time as time_module
 # Импортируем наши модули
 from database import db
 from notifications import send_reminder_notifications
-from payments import yookassa
 
 # Настройка логирования
 logging.basicConfig(
@@ -539,7 +538,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_amount = 0
         
         for i, rem in enumerate(reminders[:10], 1):
-            # Форматируем дату (ИСПРАВЛЕННЫЙ КОД)
+            # Форматируем дату
             payment_date = rem.get('payment_date', '')
             if isinstance(payment_date, str):
                 try:
@@ -670,7 +669,7 @@ async def handle_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         total_amount = 0
         
         for i, rem in enumerate(reminders[:10], 1):
-            # Форматируем дату (ИСПРАВЛЕННЫЙ КОД)
+            # Форматируем дату
             payment_date = rem.get('payment_date', '')
             if isinstance(payment_date, str):
                 try:
@@ -763,7 +762,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_text = (
             f"<b>📊 СТАТУС БОТА «НеЗабудьОплатить»</b>\n\n"
             f"<b>🤖 Telegram API:</b> ✅ подключен\n"
-            f"<b>💳 ЮKassa:</b> {'✅ настроена' if yookassa.is_configured() else '⚠️ не настроена'}\n"
             f"<b>🕒 Время уведомлений:</b> 10:00 по Москве\n"
             f"<b>📅 Лимит бесплатных:</b> {FREE_LIMIT}\n"
             f"<b>🕒 Серверное время:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
@@ -951,14 +949,11 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 cursor.execute("SELECT COUNT(*) FROM reminders")
                 total_reminders = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM payments WHERE status = 'succeeded'")
-                successful_payments = cursor.fetchone()[0]
             else:
-                total_users = premium_users = total_reminders = successful_payments = 0
+                total_users = premium_users = total_reminders = 0
     except Exception as e:
         logger.error(f"Ошибка статистики: {e}")
-        total_users = premium_users = total_reminders = successful_payments = 0
+        total_users = premium_users = total_reminders = 0
     
     # Клавиатура с рассылкой
     keyboard = [
@@ -980,8 +975,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<b>Статистика:</b>\n"
             f"• 👥 Пользователей: {total_users}\n"
             f"• 💎 Премиум: {premium_users}\n"
-            f"• 📝 Напоминаний: {total_reminders}\n"
-            f"• 💰 Успешных платежей: {successful_payments}\n\n"
+            f"• 📝 Напоминаний: {total_reminders}\n\n"
             f"<b>Доступные функции:</b>\n"
             f"• 📨 Рассылка сообщений\n"
             f"• 💎 Управление премиумом\n"
@@ -996,8 +990,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<b>Статистика:</b>\n"
             f"• 👥 Пользователей: {total_users}\n"
             f"• 💎 Премиум: {premium_users}\n"
-            f"• 📝 Напоминаний: {total_reminders}\n"
-            f"• 💰 Успешных платежей: {successful_payments}\n\n"
+            f"• 📝 Напоминаний: {total_reminders}\n\n"
             f"<b>Доступные функции:</b>\n"
             f"• 📨 Рассылка сообщений\n"
             f"• 💎 Управление премиумом\n"
@@ -1778,34 +1771,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if period in PREMIUM_PRICES:
                 price_info = PREMIUM_PRICES[period]
                 
-                if yookassa.is_configured():
-                    await query.edit_message_text(
-                        f"💳 <b>ОПЛАТА {price_info['text'].upper()} ПОДПИСКИ</b>\n\n"
-                        f"Сумма: {price_info['amount']}₽\n\n"
-                        "Интеграция с ЮKassa в процессе настройки.\n"
-                        "Скоро здесь будет ссылка для оплаты!\n\n"
-                        "А пока администратор может активировать вам премиум вручную.",
-                        parse_mode='HTML'
-                    )
-                else:
-                    keyboard = [
-                        [InlineKeyboardButton("✅ Я оплатил", callback_data=f"manual_paid_{period}")],
-                        [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")]
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    await query.edit_message_text(
-                        f"💳 <b>ОПЛАТА {price_info['text'].upper()} ПОДПИСКИ</b>\n\n"
-                        f"Сумма: {price_info['amount']}₽\n\n"
-                        "Для оплаты:\n"
-                        "1. Переведите на карту:\n"
-                        "<code>2204 1801 8490 6030</code>\n"
-                        "2. В комментарии укажите ваш username\n"
-                        "3. Нажмите '✅ Я оплатил'\n\n"
-                        "Администратор активирует премиум вручную.",
-                        reply_markup=reply_markup,
-                        parse_mode='HTML'
-                    )
+                keyboard = [
+                    [InlineKeyboardButton("✅ Я оплатил", callback_data=f"manual_paid_{period}")],
+                    [InlineKeyboardButton("↩️ Назад", callback_data="premium_info")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(
+                    f"💳 <b>ОПЛАТА {price_info['text'].upper()} ПОДПИСКИ</b>\n\n"
+                    f"Сумма: {price_info['amount']}₽\n\n"
+                    "<b>Для оплаты:</b>\n"
+                    "1. Переведите на карту:\n"
+                    "<code>2204 1801 8490 6030</code>\n"
+                    "2. В комментарии укажите ваш username\n"
+                    "3. Нажмите '✅ Я оплатил'\n\n"
+                    "<b>Или отправьте на USDT (TRC20):</b>\n"
+                    "<code>TQzCJToybGtn8NnXQ6DTb2qZCBWcpuzX6s</code>\n\n"
+                    "Администратор активирует премиум вручную.",
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
             else:
                 await query.edit_message_text("❌ Неверный период подписки.")
                 
@@ -2285,18 +2270,14 @@ async def admin_stats_handler(query, context):
                 
                 cursor.execute("SELECT COUNT(*) FROM reminders")
                 reminders = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM payments WHERE status = 'succeeded'")
-                payments = cursor.fetchone()[0]
             else:
-                total = premium = reminders = payments = 0
+                total = premium = reminders = 0
         
         await query.edit_message_text(
             f"📊 <b>СТАТИСТИКА БОТА</b>\n\n"
             f"• 👥 Всего пользователей: {total}\n"
             f"• 💎 Премиум пользователей: {premium}\n"
-            f"• 📝 Всего напоминаний: {reminders}\n"
-            f"• 💰 Успешных платежей: {payments}\n\n"
+            f"• 📝 Всего напоминаний: {reminders}\n\n"
             f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>",
             parse_mode='HTML'
         )
@@ -2472,8 +2453,6 @@ async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_T
     
     await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='HTML')
 
-# ========== КОМАНДА ДЛЯ ПРОСМОТРА ЗАЯВОК ==========
-
 async def admin_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /admin_requests - просмотр заявок на оплату"""
     user = update.effective_user
@@ -2631,8 +2610,7 @@ def main():
     except Exception as e:
         print(f"❌ Ошибка БД: {e}")
     
-    # Проверка ЮKassa
-    print(f"💳 ЮKassa: {'настроена' if yookassa.is_configured() else 'НЕ настроена'}")
+    print(f"💳 Система оплаты: РУЧНАЯ")
     
     # Создаем приложение бота
     app = Application.builder().token(TOKEN).build()
@@ -2730,5 +2708,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
