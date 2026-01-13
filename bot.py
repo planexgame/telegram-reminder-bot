@@ -1,4 +1,4 @@
-# bot.py - полный исправный код
+# bot.py - полный исправленный код
 import os
 import logging
 from datetime import datetime, timedelta, time
@@ -329,17 +329,41 @@ async def buy_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def status_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /status"""
     try:
-        # Получаем статистику из базы данных
-        stats = db.get_statistics()
+        # Получаем статистику напрямую из базы
+        conn = db.get_connection()
+        if not conn:
+            await update.message.reply_text("❌ Ошибка подключения к базе данных.")
+            return
+        
+        cursor = conn.cursor()
+        
+        # Количество пользователей
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0] or 0
+        
+        # Количество премиум пользователей
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
+        premium_users = cursor.fetchone()[0] or 0
+        
+        # Общее количество напоминаний
+        cursor.execute("SELECT COUNT(*) FROM reminders")
+        total_reminders = cursor.fetchone()[0] or 0
+        
+        # Активные напоминания (с датой в будущем или сегодня)
+        today = datetime.now().date().strftime('%Y-%m-%d')
+        cursor.execute("SELECT COUNT(*) FROM reminders WHERE payment_date >= ?", (today,))
+        active_reminders = cursor.fetchone()[0] or 0
+        
+        conn.close()
         
         message = (
             f"📊 <b>СТАТУС БОТА</b>\n\n"
             f"✅ <b>Бот работает</b>\n\n"
             f"<b>Статистика:</b>\n"
-            f"• 👥 Всего пользователей: {stats['total_users']}\n"
-            f"• 💎 Премиум пользователей: {stats['premium_users']}\n"
-            f"• 📝 Всего напоминаний: {stats['total_reminders']}\n"
-            f"• 🔔 Активных напоминаний: {stats['active_reminders']}\n\n"
+            f"• 👥 Всего пользователей: {total_users}\n"
+            f"• 💎 Премиум пользователей: {premium_users}\n"
+            f"• 📝 Всего напоминаний: {total_reminders}\n"
+            f"• 🔔 Активных напоминаний: {active_reminders}\n\n"
             f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>"
         )
         
@@ -347,7 +371,7 @@ async def status_command_handler(update: Update, context: ContextTypes.DEFAULT_T
         
     except Exception as e:
         logger.error(f"Ошибка в команде /status: {e}")
-        await update.message.reply_text("❌ Ошибка получения статистики.")
+        await update.message.reply_text(f"❌ Ошибка получения статистики: {str(e)[:100]}")
 
 async def help_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help"""
@@ -442,12 +466,33 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     try:
-        stats = db.get_statistics()
+        # Получаем статистику напрямую
+        conn = db.get_connection()
+        if not conn:
+            await update.message.reply_text("❌ Ошибка подключения к базе данных.")
+            return
+        
+        cursor = conn.cursor()
+        
+        # Количество пользователей
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0] or 0
+        
+        # Количество премиум пользователей
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
+        premium_users = cursor.fetchone()[0] or 0
+        
+        # Общее количество напоминаний
+        cursor.execute("SELECT COUNT(*) FROM reminders")
+        total_reminders = cursor.fetchone()[0] or 0
+        
+        conn.close()
     
         keyboard = [
             [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
             [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
-            [InlineKeyboardButton("✅ Активировать премиум", callback_data="admin_activate_user")],
+            [InlineKeyboardButton("✅ Активировать премиум (ID)", callback_data="admin_activate_user")],
+            [InlineKeyboardButton("✅ Активировать (username)", callback_data="admin_activate_username_form")],
             [InlineKeyboardButton("❌ Деактивировать премиум", callback_data="admin_deactivate_user")],
             [InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast")],
             [InlineKeyboardButton("🔙 В меню", callback_data="start_menu")]
@@ -458,9 +503,9 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
         message = (
             f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
             f"<b>Статистика:</b>\n"
-            f"• 👥 Пользователей: {stats['total_users']}\n"
-            f"• 💎 Премиум: {stats['premium_users']}\n"
-            f"• 📝 Напоминаний: {stats['total_reminders']}\n\n"
+            f"• 👥 Пользователей: {total_users}\n"
+            f"• 💎 Премиум: {premium_users}\n"
+            f"• 📝 Напоминаний: {total_reminders}\n\n"
             f"<b>Действия:</b>"
         )
         
@@ -468,7 +513,7 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
         
     except Exception as e:
         logger.error(f"Ошибка в команде /admin: {e}")
-        await update.message.reply_text("❌ Ошибка загрузки админ-панели.")
+        await update.message.reply_text(f"❌ Ошибка загрузки админ-панели: {str(e)[:100]}")
 
 async def admin_activate_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /admin_activate"""
@@ -493,12 +538,12 @@ async def admin_activate_command_handler(update: Update, context: ContextTypes.D
         conn = db.get_connection()
         if conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id FROM users WHERE telegram_id = ?", (user_id_to_activate,))
+            cursor.execute("SELECT id, username FROM users WHERE telegram_id = ?", (user_id_to_activate,))
             result = cursor.fetchone()
-            conn.close()
             
             if result:
                 internal_user_id = result[0]
+                username = result[1]
                 if db.activate_premium(internal_user_id, days):
                     # Уведомляем пользователя
                     try:
@@ -512,17 +557,77 @@ async def admin_activate_command_handler(update: Update, context: ContextTypes.D
                     except:
                         pass
                     
+                    username_display = f"@{username}" if username else f"ID:{user_id_to_activate}"
                     await update.message.reply_text(
-                        f"✅ Премиум активирован для пользователя {user_id_to_activate} на {days} дней."
+                        f"✅ Премиум активирован для {username_display} на {days} дней."
                     )
                 else:
                     await update.message.reply_text("❌ Ошибка активации премиума.")
             else:
                 await update.message.reply_text("❌ Пользователь не найден.")
+            conn.close()
         else:
             await update.message.reply_text("❌ Ошибка подключения к базе данных.")
     except Exception as e:
         logger.error(f"Ошибка в admin_activate: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+async def admin_activate_username_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /admin_activate_username - активация премиума по username"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Команда только для администратора.")
+        return
+    
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Использование: /admin_activate_username <username> <days>\n\n"
+            "Пример: /admin_activate_username username 30\n\n"
+            "⚠️ Указывайте username БЕЗ @"
+        )
+        return
+    
+    try:
+        username = context.args[0].lstrip('@')  # Убираем @ если есть
+        days = int(context.args[1])
+        
+        # Получаем пользователя по username
+        conn = db.get_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, telegram_id FROM users WHERE username = ?", (username,))
+            result = cursor.fetchone()
+            
+            if result:
+                internal_user_id = result[0]
+                telegram_id = result[1]
+                
+                if db.activate_premium(internal_user_id, days):
+                    # Уведомляем пользователя
+                    try:
+                        await context.bot.send_message(
+                            chat_id=telegram_id,
+                            text=f"🎉 <b>ВАШ ПРЕМИУМ АКТИВИРОВАН!</b>\n\n"
+                                 f"Администратор активировал вам премиум подписку на {days} дней.\n"
+                                 f"Теперь у вас есть неограниченные напоминания и расширенные уведомления! 💎",
+                            parse_mode='HTML'
+                        )
+                    except:
+                        pass
+                    
+                    await update.message.reply_text(
+                        f"✅ Премиум активирован для @{username} на {days} дней."
+                    )
+                else:
+                    await update.message.reply_text("❌ Ошибка активации премиума.")
+            else:
+                await update.message.reply_text(f"❌ Пользователь с username @{username} не найден.")
+            conn.close()
+        else:
+            await update.message.reply_text("❌ Ошибка подключения к базе данных.")
+    except Exception as e:
+        logger.error(f"Ошибка в admin_activate_username: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
 async def admin_deactivate_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -547,20 +652,22 @@ async def admin_deactivate_command_handler(update: Update, context: ContextTypes
         conn = db.get_connection()
         if conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id FROM users WHERE telegram_id = ?", (user_id_to_deactivate,))
+            cursor.execute("SELECT id, username FROM users WHERE telegram_id = ?", (user_id_to_deactivate,))
             result = cursor.fetchone()
-            conn.close()
             
             if result:
                 internal_user_id = result[0]
+                username = result[1]
                 if db.deactivate_premium(internal_user_id):
+                    username_display = f"@{username}" if username else f"ID:{user_id_to_deactivate}"
                     await update.message.reply_text(
-                        f"✅ Премиум деактивирован для пользователя {user_id_to_deactivate}."
+                        f"✅ Премиум деактивирован для {username_display}."
                     )
                 else:
                     await update.message.reply_text("❌ Ошибка деактивации премиума.")
             else:
                 await update.message.reply_text("❌ Пользователь не найден.")
+            conn.close()
         else:
             await update.message.reply_text("❌ Ошибка подключения к базе данных.")
     except Exception as e:
@@ -1177,8 +1284,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"├ Период: {price_info['text']}\n"
                     f"├ Сумма: {price_info['amount']}₽\n"
                     f"└ Дней: {price_info['days']}\n\n"
-                    f"<b>⚡ Быстрая активация:</b>\n"
+                    f"<b>⚡ Быстрая активация по ID:</b>\n"
                     f"<code>/admin_activate {user.id} {price_info['days']}</code>\n\n"
+                    f"<b>⚡ Быстрая активация по username:</b>\n"
+                    f"<code>/admin_activate_username {user.username if user.username else 'укажите_username'} {price_info['days']}</code>\n\n"
                     f"<b>⏰ Время заявки:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
                 )
                 
@@ -1215,6 +1324,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Доступ запрещен.")
                 return
             await show_admin_activate_form_button(update, context)
+            
+        elif query.data == "admin_activate_username_form":
+            if user.id != ADMIN_ID:
+                await query.edit_message_text("❌ Доступ запрещен.")
+                return
+            await show_admin_activate_username_form_button(update, context)
             
         elif query.data == "admin_deactivate_user":
             if user.id != ADMIN_ID:
@@ -1429,12 +1544,33 @@ async def show_admin_panel_button(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     
     try:
-        stats = db.get_statistics()
+        # Получаем статистику напрямую
+        conn = db.get_connection()
+        if not conn:
+            await query.edit_message_text("❌ Ошибка подключения к базе данных.")
+            return
+        
+        cursor = conn.cursor()
+        
+        # Количество пользователей
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0] or 0
+        
+        # Количество премиум пользователей
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
+        premium_users = cursor.fetchone()[0] or 0
+        
+        # Общее количество напоминаний
+        cursor.execute("SELECT COUNT(*) FROM reminders")
+        total_reminders = cursor.fetchone()[0] or 0
+        
+        conn.close()
     
         keyboard = [
             [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
             [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
-            [InlineKeyboardButton("✅ Активировать премиум", callback_data="admin_activate_user")],
+            [InlineKeyboardButton("✅ Активировать премиум (ID)", callback_data="admin_activate_user")],
+            [InlineKeyboardButton("✅ Активировать (username)", callback_data="admin_activate_username_form")],
             [InlineKeyboardButton("❌ Деактивировать премиум", callback_data="admin_deactivate_user")],
             [InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast")],
             [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]
@@ -1445,9 +1581,9 @@ async def show_admin_panel_button(update: Update, context: ContextTypes.DEFAULT_
         message = (
             f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
             f"<b>Статистика:</b>\n"
-            f"• 👥 Пользователей: {stats['total_users']}\n"
-            f"• 💎 Премиум: {stats['premium_users']}\n"
-            f"• 📝 Напоминаний: {stats['total_reminders']}\n\n"
+            f"• 👥 Пользователей: {total_users}\n"
+            f"• 💎 Премиум: {premium_users}\n"
+            f"• 📝 Напоминаний: {total_reminders}\n\n"
             f"<b>Действия:</b>"
         )
         
@@ -1462,32 +1598,41 @@ async def show_admin_stats_button(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     
     try:
-        stats = db.get_statistics()
+        conn = db.get_connection()
+        if not conn:
+            await query.edit_message_text("❌ Ошибка подключения к базе данных.")
+            return
+        
+        cursor = conn.cursor()
+        
+        # Количество пользователей
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0] or 0
+        
+        # Количество премиум пользователей
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
+        premium_users = cursor.fetchone()[0] or 0
+        
+        # Общее количество напоминаний
+        cursor.execute("SELECT COUNT(*) FROM reminders")
+        total_reminders = cursor.fetchone()[0] or 0
+        
+        # Активные напоминания (с датой в будущем или сегодня)
+        today = datetime.now().date().strftime('%Y-%m-%d')
+        cursor.execute("SELECT COUNT(*) FROM reminders WHERE payment_date >= ?", (today,))
+        active_reminders = cursor.fetchone()[0] or 0
         
         # Дополнительная статистика
-        today = datetime.now().date().strftime('%Y-%m-%d')
         tomorrow = (datetime.now() + timedelta(days=1)).date().strftime('%Y-%m-%d')
+        cursor.execute("SELECT COUNT(*) FROM reminders WHERE payment_date = ?", (tomorrow,))
+        tomorrow_reminders = cursor.fetchone()[0] or 0
         
-        # Подсчет напоминаний на сегодня и завтра
-        conn = db.get_connection()
-        today_reminders = 0
-        tomorrow_reminders = 0
-        active_users = 0
+        # Активные пользователи (за последние 7 дней)
+        week_ago = (datetime.now() - timedelta(days=7)).date().strftime('%Y-%m-%d')
+        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM reminders WHERE created_at >= ?", (week_ago,))
+        active_users = cursor.fetchone()[0] or 0
         
-        if conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM reminders WHERE payment_date = ?", (today,))
-            today_reminders = cursor.fetchone()[0] or 0
-            
-            cursor.execute("SELECT COUNT(*) FROM reminders WHERE payment_date = ?", (tomorrow,))
-            tomorrow_reminders = cursor.fetchone()[0] or 0
-            
-            # Активные пользователи (за последние 7 дней)
-            week_ago = (datetime.now() - timedelta(days=7)).date().strftime('%Y-%m-%d')
-            cursor.execute("SELECT COUNT(DISTINCT user_id) FROM reminders WHERE created_at >= ?", (week_ago,))
-            active_users = cursor.fetchone()[0] or 0
-            
-            conn.close()
+        conn.close()
     
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1495,12 +1640,12 @@ async def show_admin_stats_button(update: Update, context: ContextTypes.DEFAULT_
         message = (
             f"📊 <b>ДЕТАЛЬНАЯ СТАТИСТИКА БОТА</b>\n\n"
             f"<b>Основная статистика:</b>\n"
-            f"• 👥 Всего пользователей: {stats['total_users']}\n"
-            f"• 💎 Премиум пользователей: {stats['premium_users']}\n"
-            f"• 📝 Всего напоминаний: {stats['total_reminders']}\n\n"
+            f"• 👥 Всего пользователей: {total_users}\n"
+            f"• 💎 Премиум пользователей: {premium_users}\n"
+            f"• 📝 Всего напоминаний: {total_reminders}\n"
+            f"• 🔔 Активных напоминаний: {active_reminders}\n\n"
             f"<b>Активность:</b>\n"
             f"• 🎯 Активные пользователи (7 дней): {active_users}\n"
-            f"• 📅 Напоминаний сегодня: {today_reminders}\n"
             f"• 📆 Напоминаний завтра: {tomorrow_reminders}\n\n"
             f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>"
         )
@@ -1574,11 +1719,31 @@ async def show_admin_activate_form_button(update: Update, context: ContextTypes.
     query = update.callback_query
     
     message = (
-        "✅ <b>АКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
+        "✅ <b>АКТИВАЦИЯ ПРЕМИУМА ПО ID</b>\n\n"
         "Используйте команду:\n"
         "<code>/admin_activate &lt;user_id&gt; &lt;days&gt;</code>\n\n"
         "Пример: <code>/admin_activate 123456789 30</code>\n\n"
         "<i>Где user_id - Telegram ID пользователя, days - количество дней</i>"
+    )
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+async def show_admin_activate_username_form_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать форму активации премиума по username при нажатии кнопки"""
+    query = update.callback_query
+    
+    message = (
+        "✅ <b>АКТИВАЦИЯ ПРЕМИУМА ПО USERNAME</b>\n\n"
+        "Используйте команду:\n"
+        "<code>/admin_activate_username &lt;username&gt; &lt;days&gt;</code>\n\n"
+        "Пример: <code>/admin_activate_username username 30</code>\n\n"
+        "<i>Указывайте username БЕЗ символа @</i>\n\n"
+        "Примеры:\n"
+        "<code>/admin_activate_username john_doe 30</code>\n"
+        "<code>/admin_activate_username alice123 90</code>"
     )
     
     keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]
@@ -1776,14 +1941,46 @@ def main():
         if db.init_db():
             print("✅ База данных: подключена")
             
-            # Проверим статистику
-            stats = db.get_statistics()
-            print(f"👥 Пользователей в БД: {stats['total_users']}")
-            print(f"📝 Напоминаний в БД: {stats['total_reminders']}")
+            # ПРЯМАЯ ПРОВЕРКА СТАТИСТИКИ
+            conn = db.get_connection()
+            if conn:
+                cursor = conn.cursor()
+                
+                # Проверяем количество пользователей
+                cursor.execute("SELECT COUNT(*) FROM users")
+                total_users = cursor.fetchone()[0] or 0
+                print(f"👥 Всего пользователей: {total_users}")
+                
+                # Проверяем премиум пользователей
+                cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = TRUE")
+                premium_users = cursor.fetchone()[0] or 0
+                print(f"💎 Премиум пользователей: {premium_users}")
+                
+                # Проверяем общее количество напоминаний
+                cursor.execute("SELECT COUNT(*) FROM reminders")
+                total_reminders = cursor.fetchone()[0] or 0
+                print(f"📝 Всего напоминаний: {total_reminders}")
+                
+                # Проверяем активные напоминания (с датой в будущем или сегодня)
+                today = datetime.now().date().strftime('%Y-%m-%d')
+                cursor.execute("SELECT COUNT(*) FROM reminders WHERE payment_date >= ?", (today,))
+                active_reminders = cursor.fetchone()[0] or 0
+                print(f"🔔 Активных напоминаний: {active_reminders}")
+                
+                conn.close()
+                
+                # Выводим статистику напрямую
+                print("\n📊 ПРЯМАЯ ПРОВЕРКА СТАТИСТИКИ:")
+                print(f"• 👥 Всего пользователей: {total_users}")
+                print(f"• 💎 Премиум пользователей: {premium_users}")
+                print(f"• 📝 Всего напоминаний: {total_reminders}")
+                print(f"• 🔔 Активных напоминаний: {active_reminders}")
         else:
             print("⚠️ База данных: проблемы с подключением")
     except Exception as e:
         print(f"❌ Ошибка БД: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Создаем приложение бота
     app = Application.builder().token(TOKEN).build()
@@ -1798,6 +1995,7 @@ def main():
     app.add_handler(CommandHandler("new", new_command_handler))
     app.add_handler(CommandHandler("admin", admin_command_handler))
     app.add_handler(CommandHandler("admin_activate", admin_activate_command_handler))
+    app.add_handler(CommandHandler("admin_activate_username", admin_activate_username_command_handler))
     app.add_handler(CommandHandler("admin_deactivate", admin_deactivate_command_handler))
     app.add_handler(CommandHandler("broadcast", broadcast_command_handler))
     app.add_handler(CommandHandler("broadcast_premium", broadcast_premium_command_handler))
