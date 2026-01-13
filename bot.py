@@ -493,7 +493,8 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
             [InlineKeyboardButton("✅ Активировать премиум (ID)", callback_data="admin_activate_user")],
             [InlineKeyboardButton("✅ Активировать (username)", callback_data="admin_activate_username_form")],
-            [InlineKeyboardButton("❌ Деактивировать премиум", callback_data="admin_deactivate_user")],
+            [InlineKeyboardButton("❌ Деактивировать премиум (ID)", callback_data="admin_deactivate_user")],
+            [InlineKeyboardButton("❌ Деактивировать (username)", callback_data="admin_deactivate_username_form")],
             [InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast")],
             [InlineKeyboardButton("🔙 В меню", callback_data="start_menu")]
         ]
@@ -672,6 +673,51 @@ async def admin_deactivate_command_handler(update: Update, context: ContextTypes
             await update.message.reply_text("❌ Ошибка подключения к базе данных.")
     except Exception as e:
         logger.error(f"Ошибка в admin_deactivate: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+async def admin_deactivate_username_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /admin_deactivate_username - деактивация премиума по username"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Команда только для администратора.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "Использование: /admin_deactivate_username <username>\n\n"
+            "Пример: /admin_deactivate_username username\n\n"
+            "⚠️ Указывайте username БЕЗ @"
+        )
+        return
+    
+    try:
+        username = context.args[0].lstrip('@')  # Убираем @ если есть
+        
+        # Получаем пользователя по username
+        conn = db.get_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, telegram_id FROM users WHERE username = ?", (username,))
+            result = cursor.fetchone()
+            
+            if result:
+                internal_user_id = result[0]
+                telegram_id = result[1]
+                
+                if db.deactivate_premium(internal_user_id):
+                    await update.message.reply_text(
+                        f"✅ Премиум деактивирован для @{username}."
+                    )
+                else:
+                    await update.message.reply_text("❌ Ошибка деактивации премиума.")
+            else:
+                await update.message.reply_text(f"❌ Пользователь с username @{username} не найден.")
+            conn.close()
+        else:
+            await update.message.reply_text("❌ Ошибка подключения к базе данных.")
+    except Exception as e:
+        logger.error(f"Ошибка в admin_deactivate_username: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
 async def broadcast_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1337,6 +1383,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             await show_admin_deactivate_form_button(update, context)
             
+        elif query.data == "admin_deactivate_username_form":
+            if user.id != ADMIN_ID:
+                await query.edit_message_text("❌ Доступ запрещен.")
+                return
+            await show_admin_deactivate_username_form_button(update, context)
+            
         elif query.data == "admin_broadcast":
             if user.id != ADMIN_ID:
                 await query.edit_message_text("❌ Доступ запрещен.")
@@ -1571,7 +1623,8 @@ async def show_admin_panel_button(update: Update, context: ContextTypes.DEFAULT_
             [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
             [InlineKeyboardButton("✅ Активировать премиум (ID)", callback_data="admin_activate_user")],
             [InlineKeyboardButton("✅ Активировать (username)", callback_data="admin_activate_username_form")],
-            [InlineKeyboardButton("❌ Деактивировать премиум", callback_data="admin_deactivate_user")],
+            [InlineKeyboardButton("❌ Деактивировать премиум (ID)", callback_data="admin_deactivate_user")],
+            [InlineKeyboardButton("❌ Деактивировать (username)", callback_data="admin_deactivate_username_form")],
             [InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast")],
             [InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]
         ]
@@ -1752,15 +1805,35 @@ async def show_admin_activate_username_form_button(update: Update, context: Cont
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
 async def show_admin_deactivate_form_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать форму деактивации премиума при нажатии кнопки"""
+    """Показать форму деактивации премиума по ID при нажатии кнопки"""
     query = update.callback_query
     
     message = (
-        "❌ <b>ДЕАКТИВАЦИЯ ПРЕМИУМА</b>\n\n"
+        "❌ <b>ДЕАКТИВАЦИЯ ПРЕМИУМА ПО ID</b>\n\n"
         "Используйте команду:\n"
         "<code>/admin_deactivate &lt;user_id&gt;</code>\n\n"
         "Пример: <code>/admin_deactivate 123456789</code>\n\n"
         "<i>Где user_id - Telegram ID пользователя</i>"
+    )
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+async def show_admin_deactivate_username_form_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать форму деактивации премиума по username при нажатии кнопки"""
+    query = update.callback_query
+    
+    message = (
+        "❌ <b>ДЕАКТИВАЦИЯ ПРЕМИУМА ПО USERNAME</b>\n\n"
+        "Используйте команду:\n"
+        "<code>/admin_deactivate_username &lt;username&gt;</code>\n\n"
+        "Пример: <code>/admin_deactivate_username username</code>\n\n"
+        "<i>Указывайте username БЕЗ символа @</i>\n\n"
+        "Примеры:\n"
+        "<code>/admin_deactivate_username john_doe</code>\n"
+        "<code>/admin_deactivate_username alice123</code>"
     )
     
     keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]
@@ -1997,6 +2070,7 @@ def main():
     app.add_handler(CommandHandler("admin_activate", admin_activate_command_handler))
     app.add_handler(CommandHandler("admin_activate_username", admin_activate_username_command_handler))
     app.add_handler(CommandHandler("admin_deactivate", admin_deactivate_command_handler))
+    app.add_handler(CommandHandler("admin_deactivate_username", admin_deactivate_username_command_handler))
     app.add_handler(CommandHandler("broadcast", broadcast_command_handler))
     app.add_handler(CommandHandler("broadcast_premium", broadcast_premium_command_handler))
     app.add_handler(CommandHandler("broadcast_test", broadcast_test_command_handler))
