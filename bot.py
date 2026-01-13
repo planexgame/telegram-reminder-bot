@@ -1,4 +1,4 @@
-# bot.py - полный исправленный код
+# bot.py - полный исправный код
 import os
 import logging
 from datetime import datetime, timedelta, time
@@ -575,14 +575,19 @@ async def broadcast_command_handler(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("❌ Команда только для администратора.")
         return
     
-    if not context.args:
+    if not update.message.text or len(update.message.text) <= 10:  # /broadcast + пробел
         await update.message.reply_text(
             "Использование: /broadcast <сообщение>\n\n"
             "Пример: /broadcast Важное обновление бота!"
         )
         return
     
-    message_text = " ".join(context.args)
+    # Сохраняем оригинальный текст с переносами строк
+    command_text = update.message.text
+    if command_text.startswith('/broadcast '):
+        message_text = command_text[len('/broadcast '):]
+    else:
+        message_text = command_text
     
     # Создаем клавиатуру с кнопками для выбора типа рассылки
     keyboard = [
@@ -614,14 +619,19 @@ async def broadcast_premium_command_handler(update: Update, context: ContextType
         await update.message.reply_text("❌ Команда только для администратора.")
         return
     
-    if not context.args:
+    if not update.message.text or len(update.message.text) <= 16:  # /broadcast_premium + пробел
         await update.message.reply_text(
             "Использование: /broadcast_premium <сообщение>\n\n"
             "Пример: /broadcast_premium Специальное предложение для премиум пользователей!"
         )
         return
     
-    message_text = " ".join(context.args)
+    # Сохраняем оригинальный текст с переносами строк
+    command_text = update.message.text
+    if command_text.startswith('/broadcast_premium '):
+        message_text = command_text[len('/broadcast_premium '):]
+    else:
+        message_text = command_text
     
     keyboard = [
         [
@@ -649,15 +659,80 @@ async def broadcast_test_command_handler(update: Update, context: ContextTypes.D
         await update.message.reply_text("❌ Команда только для администратора.")
         return
     
-    message_text = "Тестовое сообщение от бота " + datetime.now().strftime('%d.%m.%Y %H:%M')
+    # Проверяем, есть ли текст сообщения
+    if update.message.text and len(update.message.text) > len('/broadcast_test'):
+        # Извлекаем текст сообщения
+        command_text = update.message.text
+        if command_text.startswith('/broadcast_test '):
+            message_text = command_text[len('/broadcast_test '):]
+        else:
+            # Если команда была отправлена без аргументов, используем текст из reply
+            if update.message.reply_to_message:
+                message_text = update.message.reply_to_message.text or "Тестовое сообщение"
+            else:
+                message_text = "Тестовое сообщение от бота " + datetime.now().strftime('%d.%m.%Y %H:%M')
+    else:
+        # Если команда без аргументов, проверяем reply
+        if update.message.reply_to_message:
+            message_text = update.message.reply_to_message.text or "Тестовое сообщение"
+        else:
+            message_text = "Тестовое сообщение от бота " + datetime.now().strftime('%d.%m.%Y %H:%M')
     
     try:
+        # Отправляем тестовое сообщение админу
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=f"📋 <b>ТЕСТОВАЯ РАССЫЛКА</b>\n\n{message_text}",
             parse_mode='HTML'
         )
-        await update.message.reply_text("✅ Тестовое сообщение отправлено вам.")
+        
+        # Если это фото
+        if update.message.reply_to_message and update.message.reply_to_message.photo:
+            await context.bot.send_photo(
+                chat_id=ADMIN_ID,
+                photo=update.message.reply_to_message.photo[-1].file_id,
+                caption=f"📋 <b>ТЕСТОВАЯ РАССЫЛКА ФОТО</b>\n\n{message_text}" if message_text else "📋 <b>ТЕСТОВАЯ РАССЫЛКА ФОТО</b>",
+                parse_mode='HTML'
+            )
+            await update.message.reply_text("✅ Тестовое фото отправлено вам.")
+        else:
+            await update.message.reply_text("✅ Тестовое сообщение отправлено вам.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка тестовой рассылки: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+async def broadcast_test_full_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /broadcast_test_full - тест с сохранением всего форматирования"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Команда только для администратора.")
+        return
+    
+    # Получаем весь текст сообщения
+    if update.message.text:
+        # Сохраняем полный текст с переносами
+        full_text = update.message.text
+        
+        # Извлекаем сообщение (убираем команду)
+        if full_text.startswith('/broadcast_test_full '):
+            message_text = full_text[len('/broadcast_test_full '):]
+        else:
+            message_text = full_text
+    else:
+        message_text = "Тестовое сообщение"
+    
+    try:
+        # Отправляем точную копию
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=message_text,
+            parse_mode=None  # Не используем HTML парсинг для сохранения точного форматирования
+        )
+        
+        await update.message.reply_text(f"✅ Тестовое сообщение отправлено (точная копия).\n\nДлина: {len(message_text)} символов")
+        
     except Exception as e:
         logger.error(f"Ошибка тестовой рассылки: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
@@ -680,7 +755,16 @@ async def broadcast_photo_command_handler(update: Update, context: ContextTypes.
         )
         return
     
-    caption = " ".join(context.args) if context.args else ""
+    # Сохраняем оригинальный текст с переносами строк
+    if update.message.text:
+        # Убираем команду из текста
+        command_text = update.message.text
+        if command_text.startswith('/broadcast_photo '):
+            caption = command_text[len('/broadcast_photo '):]
+        else:
+            caption = ""
+    else:
+        caption = ""
     
     keyboard = [
         [
@@ -699,7 +783,7 @@ async def broadcast_photo_command_handler(update: Update, context: ContextTypes.
     
     await update.message.reply_text(
         f"🖼️ <b>РАССЫЛКА ФОТО</b>\n\n"
-        f"<b>Подпись:</b> {caption if caption else 'Без подписи'}\n\n"
+        f"<b>Подпись:</b>\n{caption if caption else 'Без подписи'}\n\n"
         f"<b>Выберите аудиторию:</b>",
         reply_markup=reply_markup,
         parse_mode='HTML'
@@ -1160,7 +1244,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user.id != ADMIN_ID:
                 await query.edit_message_text("❌ Доступ запрещен.")
                 return
-            await query.edit_message_text("ℹ️ Для рассылки с фото используйте команду /broadcast в ответ на фото")
+            # Перенаправляем на ту же функцию, что и для команды
+            await broadcast_photo_command_handler(update, context)
+            
+        elif query.data == "broadcast_all_photo":
+            if user.id != ADMIN_ID:
+                await query.edit_message_text("❌ Доступ запрещен.")
+                return
+            await execute_broadcast_photo(update, context, premium_only=False)
+            
+        elif query.data == "broadcast_premium_photo":
+            if user.id != ADMIN_ID:
+                await query.edit_message_text("❌ Доступ запрещен.")
+                return
+            await execute_broadcast_photo(update, context, premium_only=True)
             
     except Exception as e:
         logger.error(f"Ошибка в button_handler: {e}")
@@ -1528,6 +1625,8 @@ async def show_admin_broadcast_form_button(update: Update, context: ContextTypes
     
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
+# ========== ФУНКЦИИ РАССЫЛКИ ==========
+
 async def execute_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, premium_only: bool = False):
     """Выполнить рассылку"""
     query = update.callback_query
@@ -1589,6 +1688,78 @@ async def execute_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         logger.error(f"Ошибка рассылки: {e}")
         await query.edit_message_text(f"❌ Ошибка при рассылке: {e}")
 
+async def execute_broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, premium_only: bool = False):
+    """Выполнить рассылку фото"""
+    query = update.callback_query
+    
+    photo_file_id = context.user_data.get('broadcast_photo', '')
+    caption = context.user_data.get('broadcast_caption', '')
+    
+    if not photo_file_id:
+        await query.edit_message_text("❌ Фото для рассылки не найдено.")
+        return
+    
+    try:
+        await query.edit_message_text("🔄 Начинаю рассылку фото...")
+        
+        conn = db.get_connection()
+        if not conn:
+            await query.edit_message_text("❌ Ошибка подключения к базе данных.")
+            return
+        
+        cursor = conn.cursor()
+        if premium_only:
+            cursor.execute("SELECT telegram_id FROM users WHERE is_premium = TRUE")
+        else:
+            cursor.execute("SELECT telegram_id FROM users")
+        
+        users = cursor.fetchall()
+        conn.close()
+        
+        success = 0
+        failed = 0
+        
+        for (telegram_id,) in users:
+            try:
+                if caption:
+                    await context.bot.send_photo(
+                        chat_id=telegram_id,
+                        photo=photo_file_id,
+                        caption=f"📢 <b>РАССЫЛКА ОТ АДМИНИСТРАТОРА</b>\n\n{caption}",
+                        parse_mode='HTML'
+                    )
+                else:
+                    await context.bot.send_photo(
+                        chat_id=telegram_id,
+                        photo=photo_file_id,
+                        caption="📢 <b>РАССЫЛКА ОТ АДМИНИСТРАТОРА</b>",
+                        parse_mode='HTML'
+                    )
+                success += 1
+                # Небольшая задержка чтобы не превысить лимиты Telegram
+                import time
+                time.sleep(0.1)
+            except Exception as e:
+                logger.error(f"Ошибка отправки фото пользователю {telegram_id}: {e}")
+                failed += 1
+        
+        result_message = (
+            f"✅ <b>РАССЫЛКА ФОТО ЗАВЕРШЕНА</b>\n\n"
+            f"<b>Аудитория:</b> {'💎 Только премиум' if premium_only else '👥 Все пользователи'}\n"
+            f"<b>Отправлено успешно:</b> {success}\n"
+            f"<b>Не удалось отправить:</b> {failed}\n"
+            f"<b>Всего пользователей:</b> {len(users)}"
+        )
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(result_message, reply_markup=reply_markup, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Ошибка рассылки фото: {e}")
+        await query.edit_message_text(f"❌ Ошибка при рассылке фото: {e}")
+
 # ========== ЗАПУСК БОТА ==========
 
 def main():
@@ -1631,6 +1802,7 @@ def main():
     app.add_handler(CommandHandler("broadcast", broadcast_command_handler))
     app.add_handler(CommandHandler("broadcast_premium", broadcast_premium_command_handler))
     app.add_handler(CommandHandler("broadcast_test", broadcast_test_command_handler))
+    app.add_handler(CommandHandler("broadcast_test_full", broadcast_test_full_command_handler))
     app.add_handler(CommandHandler("broadcast_photo", broadcast_photo_command_handler))
     app.add_handler(CommandHandler("test", test_command_handler))
     app.add_handler(CommandHandler("test_notify", test_notify_command_handler))
