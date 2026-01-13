@@ -1,4 +1,4 @@
-# bot.py - УПРОЩЕННЫЙ РАБОЧИЙ КОД БЕЗ ConversationHandler
+# bot.py - с добавленными изменениями в приветствие и помощь
 import os
 import logging
 from datetime import datetime, timedelta, time
@@ -135,13 +135,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Формируем сообщение
+        # Формируем сообщение (С ИЗМЕНЕННЫМ ПРИВЕТСТВИЕМ!)
         premium_text = "💎 АКТИВЕН" if has_premium else "🆓 БЕСПЛАТНЫЙ"
         limit_text = '∞' if has_premium else FREE_LIMIT
         
         message = (
             f"🔔 <b>НеЗабудьОплатить</b>\n\n"
-            f"Привет, {user.first_name}!\n\n как твои дела?🙂"
+            f"Привет, {user.first_name}! Как твои дела?🙂\n\n"
             f"<b>Ваша статистика:</b>\n"
             f"📊 Напоминаний: {reminders_count}/{limit_text}\n"
             f"💎 Статус: {premium_text}\n\n"
@@ -376,7 +376,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_premium_info(update, context)
             
         elif query.data == "help_btn":
-            # Помощь
+            # Помощь (С ДОБАВЛЕННОЙ ПОЧТОЙ АДМИНИСТРАТОРА!)
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -392,8 +392,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• /help — эта справка\n\n"
                 f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний\n"
                 "<b>Уведомления:</b> каждый день в 10:00 по Москве\n\n"
-                "<i>По вопросам обращайтесь к администратору</i>",
-                "<b>Почта Администратора: planexgame@gmail.com:</b>
+                "<i>По вопросам обращайтесь к администратору</i>\n"
+                "Почта администратора для связи: planexgame@gmail.com",
                 reply_markup=reply_markup,
                 parse_mode='HTML'
             )
@@ -818,7 +818,27 @@ async def show_admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help"""
-    await help_command(update, context)
+    # Используем тот же обработчик, что и для кнопки помощи
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="start_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "<b>🔔 НеЗабудьОплатить — помощь</b>\n\n"
+        "<b>Основные команды:</b>\n"
+        "• /start — главное меню\n"
+        "• /new — создать напоминание\n"
+        "• /list — список напоминаний\n"
+        "• /premium — премиум подписка\n"
+        "• /buy — купить премиум\n"
+        "• /status — статус бота\n"
+        "• /help — эта справка\n\n"
+        f"<b>Бесплатный лимит:</b> {FREE_LIMIT} напоминаний\n"
+        "<b>Уведомления:</b> каждый день в 10:00 по Москве\n\n"
+        "<i>По вопросам обращайтесь к администратору</i>\n"
+        "Почта администратора для связи: planexgame@gmail.com",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
 
 async def list_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /list"""
@@ -909,4 +929,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
